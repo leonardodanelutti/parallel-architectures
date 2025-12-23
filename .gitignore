@@ -4,3 +4,28 @@
 *.ptx
 *.cubin
 *.fatbin
+
+# Build artifacts
+build/
+*.o
+
+# Template executables
+sequential_template
+cuda_template
+benchmark_template
+
+# Your executables (add specific names as needed)
+# my_program
+# my_cuda
+# my_benchmark
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
