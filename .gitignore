@@ -4,3 +4,21 @@
 *.ptx
 *.cubin
 *.fatbin
+
+# Build artifacts
+build/
+*.o
+vector_add_sequential
+vector_add_cuda
+benchmark
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
