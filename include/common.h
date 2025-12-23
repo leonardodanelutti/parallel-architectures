@@ -6,39 +6,22 @@
 #include <cstdlib>
 #include <cmath>
 
-// Default problem sizes for benchmarking
-#define SMALL_SIZE   (1 << 20)  // 1M elements
-#define MEDIUM_SIZE  (1 << 24)  // 16M elements
-#define LARGE_SIZE   (1 << 26)  // 64M elements
+/**
+ * Common utilities for CUDA educational projects
+ * Include this header in both .cpp and .cu files
+ */
 
-// CUDA block size (threads per block)
+// Default CUDA block size (threads per block)
+// Adjust based on your problem and GPU architecture
 #define BLOCK_SIZE 256
 
 /**
- * Initialize a vector with random values
- */
-inline void initializeVector(float* vec, int size) {
-    for (int i = 0; i < size; i++) {
-        vec[i] = static_cast<float>(rand()) / RAND_MAX;
-    }
-}
-
-/**
- * Verify that two vectors are equal (within tolerance)
- */
-inline bool verifyResult(const float* a, const float* b, int size, float tolerance = 1e-5f) {
-    for (int i = 0; i < size; i++) {
-        if (fabs(a[i] - b[i]) > tolerance) {
-            std::cerr << "Mismatch at index " << i << ": " 
-                      << a[i] << " != " << b[i] << std::endl;
-            return false;
-        }
-    }
-    return true;
-}
-
-/**
- * Timer class for benchmarking
+ * Timer class for performance benchmarking
+ * Usage:
+ *   Timer timer;
+ *   timer.start();
+ *   // ... code to benchmark ...
+ *   double elapsed_ms = timer.stop();
  */
 class Timer {
 private:

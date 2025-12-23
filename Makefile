@@ -1,4 +1,5 @@
-# Makefile for CUDA Vector Addition Educational Project
+# Makefile for CUDA Educational Project
+# Generic template for CUDA development with benchmarking
 
 # Compiler settings
 CXX = g++
@@ -16,81 +17,142 @@ BUILD_DIR = build
 # Include path
 INCLUDES = -I$(INC_DIR)
 
-# Targets
-TARGETS = vector_add_sequential vector_add_cuda benchmark
+# Template targets (for reference)
+TEMPLATES = sequential_template cuda_template benchmark_template
+
+# Your actual implementation targets
+# TODO: Add your own targets here
+# TARGETS = my_sequential my_cuda my_benchmark
 
 # Default target
-all: directories $(TARGETS)
+all: directories
+	@echo "======================================"
+	@echo "CUDA Project Template"
+	@echo "======================================"
+	@echo ""
+	@echo "This is a template project structure."
+	@echo "To use this template:"
+	@echo ""
+	@echo "1. Copy the template files:"
+	@echo "   cp src/sequential_template.cpp src/my_problem.cpp"
+	@echo "   cp src/cuda_template.cu src/my_problem.cu"
+	@echo "   cp src/benchmark_template.cpp src/my_benchmark.cpp"
+	@echo ""
+	@echo "2. Implement your algorithm in the copied files"
+	@echo ""
+	@echo "3. Add build rules to this Makefile:"
+	@echo "   TARGETS = my_problem_seq my_problem_cuda my_benchmark"
+	@echo ""
+	@echo "4. Build with: make build"
+	@echo ""
+	@echo "Available commands:"
+	@echo "  make templates  - Build template examples"
+	@echo "  make build      - Build your implementations"
+	@echo "  make clean      - Remove build artifacts"
+	@echo "  make help       - Show detailed help"
+	@echo "======================================"
 
 # Create build directory
 directories:
 	@mkdir -p $(BUILD_DIR)
 
-# Sequential version (CPU only)
-vector_add_sequential: $(SRC_DIR)/vector_add_sequential.cpp $(INC_DIR)/common.h
+# Build template examples
+templates: directories $(TEMPLATES)
+
+# Template builds (for reference/testing)
+sequential_template: $(SRC_DIR)/sequential_template.cpp $(INC_DIR)/common.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -o $@
-	@echo "Built: $@"
+	@echo "Built template: $@"
 
-# CUDA version (GPU)
-vector_add_cuda: $(SRC_DIR)/vector_add_cuda.cu $(INC_DIR)/common.h
+cuda_template: $(SRC_DIR)/cuda_template.cu $(INC_DIR)/common.h $(INC_DIR)/cuda_utils.h
 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< -o $@
-	@echo "Built: $@"
+	@echo "Built template: $@"
 
-# Benchmark (both CPU and GPU)
-benchmark: $(SRC_DIR)/benchmark.cpp $(INC_DIR)/common.h
+benchmark_template: $(SRC_DIR)/benchmark_template.cpp $(INC_DIR)/common.h $(INC_DIR)/cuda_utils.h
 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< -o $@
-	@echo "Built: $@"
+	@echo "Built template: $@"
 
-# Run targets
-run-sequential: vector_add_sequential
-	@echo "Running sequential version..."
-	@./vector_add_sequential
+# TODO: Add your own build rules here
+# Example:
+# my_sequential: $(SRC_DIR)/my_problem.cpp $(INC_DIR)/common.h
+# 	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -o $@
+#
+# my_cuda: $(SRC_DIR)/my_problem.cu $(INC_DIR)/common.h $(INC_DIR)/cuda_utils.h
+# 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< -o $@
+#
+# my_benchmark: $(SRC_DIR)/my_benchmark.cpp $(INC_DIR)/common.h $(INC_DIR)/cuda_utils.h
+# 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< -o $@
 
-run-cuda: vector_add_cuda
-	@echo "Running CUDA version..."
-	@./vector_add_cuda
+# Build your actual implementations
+build: directories
+	@echo "TODO: Implement your build rules in the Makefile"
+	@echo "Add your source files and uncomment the TARGETS variable"
+	# make $(TARGETS)
 
-run-benchmark: benchmark
-	@echo "Running full benchmark..."
-	@./benchmark
+# Run targets (examples - modify for your implementations)
+run-sequential:
+	@echo "Build your sequential implementation first"
 
-# Test all implementations
-test: all
-	@echo "Testing sequential implementation..."
-	@./vector_add_sequential > /dev/null && echo "✓ Sequential test passed" || echo "✗ Sequential test failed"
-	@echo "Testing CUDA implementation..."
-	@./vector_add_cuda > /dev/null && echo "✓ CUDA test passed" || echo "✗ CUDA test failed"
-	@echo "Running comprehensive benchmark..."
-	@./benchmark
+run-cuda:
+	@echo "Build your CUDA implementation first"
+
+run-benchmark:
+	@echo "Build your benchmark first"
+
+# Test templates
+test-templates: templates
+	@echo "Testing template builds..."
+	@./sequential_template
+	@echo ""
+	@./cuda_template
+	@echo ""
+	@./benchmark_template
 
 # Clean build artifacts
 clean:
-	rm -f $(TARGETS)
+	rm -f $(TEMPLATES)
 	rm -rf $(BUILD_DIR)
 	rm -f *.o
 	@echo "Cleaned build artifacts"
 
 # Help target
 help:
-	@echo "CUDA Vector Addition - Educational Project"
+	@echo "======================================"
+	@echo "CUDA Educational Project - Makefile"
+	@echo "======================================"
+	@echo ""
+	@echo "This Makefile provides a template for building CUDA projects"
+	@echo "with both sequential and parallel implementations."
+	@echo ""
+	@echo "Getting Started:"
+	@echo "  1. Copy template files to create your implementation"
+	@echo "  2. Edit the templates with your algorithm"
+	@echo "  3. Add build rules to this Makefile"
+	@echo "  4. Run 'make build' to compile"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  all              - Build all executables (default)"
-	@echo "  vector_add_sequential - Build CPU-only version"
-	@echo "  vector_add_cuda  - Build GPU version"
-	@echo "  benchmark        - Build comprehensive benchmark"
+	@echo "  all              - Show usage information (default)"
+	@echo "  templates        - Build template examples"
+	@echo "  build            - Build your implementations"
+	@echo "  test-templates   - Build and run templates"
 	@echo ""
-	@echo "  run-sequential   - Build and run CPU version"
-	@echo "  run-cuda         - Build and run GPU version"
-	@echo "  run-benchmark    - Build and run full benchmark"
-	@echo ""
-	@echo "  test             - Build and test all implementations"
 	@echo "  clean            - Remove all build artifacts"
 	@echo "  help             - Show this help message"
+	@echo ""
+	@echo "Template files:"
+	@echo "  src/sequential_template.cpp  - CPU implementation template"
+	@echo "  src/cuda_template.cu         - GPU kernel template"
+	@echo "  src/benchmark_template.cpp   - Benchmarking template"
+	@echo ""
+	@echo "Include files:"
+	@echo "  include/common.h       - Common utilities (Timer, etc.)"
+	@echo "  include/cuda_utils.h   - CUDA helpers (error checking, etc.)"
 	@echo ""
 	@echo "Requirements:"
 	@echo "  - NVIDIA CUDA Toolkit (nvcc compiler)"
 	@echo "  - C++ compiler with C++11 support (g++)"
 	@echo "  - NVIDIA GPU with compute capability 3.5+"
+	@echo ""
+	@echo "======================================"
 
-.PHONY: all directories run-sequential run-cuda run-benchmark test clean help
+.PHONY: all directories templates build run-sequential run-cuda run-benchmark test-templates clean help

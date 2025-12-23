@@ -8,9 +8,16 @@
 # Build artifacts
 build/
 *.o
-vector_add_sequential
-vector_add_cuda
-benchmark
+
+# Template executables
+sequential_template
+cuda_template
+benchmark_template
+
+# Your executables (add specific names as needed)
+# my_program
+# my_cuda
+# my_benchmark
 
 # IDE and editor files
 .vscode/
