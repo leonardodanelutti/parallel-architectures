@@ -11,7 +11,7 @@ The project is divided into three main parts:
 
 ## The Problem
 
-Let P be an instance of 2-SAT, i.e. a set of clauses, each containing exactly two literals, and A the set of variables appearing in P. The goal is to find a subset of variables X ⊆ A of minimum cardinality and an assignment of truth values to the variables in X such that all clauses in P are satisfied.
+Let P be an instance of 2-SAT, i.e. a set of clauses, each containing exactly two literals, and A the set of variables appearing in P. The goal is to find a subset of variables X ⊆ A of minimum cardinality, and an assignment of truth values to the variables in X, such that there is only one satisfying assignment for P.
 
 The goal is to find a good heuristic to get a small set X.
 
