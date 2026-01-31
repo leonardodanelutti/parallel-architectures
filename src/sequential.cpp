@@ -14,7 +14,10 @@ void sequentialAlgorithm() {
 int main() {
     std::cout << "=== Sequential Implementation ===" << std::endl;
     
-    // TODO: Setup
+     // read 2SAT instance from file
+    int num_vars, num_clauses, asp_result;
+    CSRGraph graph;
+    read2SATInstance("instance_1000v_2500c.cnf", num_vars, num_clauses, asp_result, graph);
     
     // TODO: Run and time your algorithm
     Timer timer;
@@ -27,8 +30,8 @@ int main() {
     // TODO: Display results
     std::cout << "Execution time: " << elapsed << " ms" << std::endl;
     
-    // TODO: Cleanup
-    // - Free allocated memory
+    // Cleanup
+    freeCSRGraph(graph);
     
     std::cout << "Sequential execution completed!" << std::endl;
     

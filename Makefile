@@ -7,7 +7,7 @@ NVCC = nvcc
 
 # Compiler flags
 CXXFLAGS = -std=c++11 -O3 -Wall -Wextra
-NVCCFLAGS = -std=c++11 -O3 -arch=sm_35
+NVCCFLAGS = -std=c++11 -O3 -arch=compute_80
 
 # Directories
 SRC_DIR = src

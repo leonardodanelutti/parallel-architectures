@@ -50,9 +50,27 @@ inline void printDeviceInfo(int device = 0) {
               << prop.maxGridSize[1] << ", "
               << prop.maxGridSize[2] << "]" << std::endl;
     std::cout << "Multiprocessor count: " << prop.multiProcessorCount << std::endl;
-    std::cout << "Memory clock rate: " << prop.memoryClockRate / 1000.0 << " MHz" << std::endl;
     std::cout << "Memory bus width: " << prop.memoryBusWidth << " bits" << std::endl;
     std::cout << "========================================" << std::endl;
 }
+
+/*
+========================================
+GPU Device Information - Colab
+========================================
+Device name: Tesla T4
+Compute capability: 7.5
+Global memory: 15095.1 MB
+Shared memory per block: 48 KB
+Registers per block: 65536
+Warp size: 32
+Max threads per block: 1024
+Max threads dimensions: [1024, 1024, 64]
+Max grid dimensions: [2147483647, 65535, 65535]
+Multiprocessor count: 40
+Memory clock rate: 5001 MHz
+Memory bus width: 256 bits
+========================================
+*/
 
 #endif // CUDA_UTILS_H

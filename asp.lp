@@ -2,12 +2,17 @@
 % Define vars: var(a). var(b). var(c).
 % Define clauses: clause(id, lit1, lit2). 
 % Literals are pos(a) or neg(a).
-var(1..6).
-clause(1, neg(1), pos(4)).
-clause(2, neg(2), pos(4)). 
-clause(3, neg(2), pos(5)). 
-clause(4, neg(3), pos(5)). 
-clause(5, neg(3), pos(6)).
+
+% Example Input
+%var(1..6).
+%clause(1, neg(1), pos(4)).
+%clause(2, neg(2), pos(4)). 
+%clause(3, neg(2), pos(5)). 
+%clause(4, neg(3), pos(5)). 
+%clause(5, neg(3), pos(6)).
+
+% Import instance data
+% #include "./instance_1000v_1000c.lp".
 
 % Define duals for propagation: dual of pos(1) is neg(1)
 dual(pos(A), neg(A)) :- var(A).
