@@ -156,7 +156,7 @@ int* computeSCC(const CSRGraph& graph, int blocks) {
     CUDA_CHECK(cudaMalloc(&d_wl_size, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_io_max, graph.num_nodes * sizeof(int2)));
 
-    // initialize work lists and iomax
+    // initialize work lists and io_max
     globalInit<<<blocks, NumThPerBlock>>>(graph, d_wl1, d_io_max);
 
     bool go_again = true;
@@ -165,7 +165,7 @@ int* computeSCC(const CSRGraph& graph, int blocks) {
     while (go_again) {
         // Propagate max values
         while (go_again) {
-            CUDA_CHECK(cudaMemsetAsync(d_go_again, false, sizeof(bool))); // d_goagain = false;
+            CUDA_CHECK(cudaMemsetAsync(d_go_again, false, sizeof(bool))); // d_go_again = false;
             propagateMax<<<blocks, NumThPerBlock>>>(d_wl1, wl_size, d_io_max, d_go_again);
             // copy back go_again
             CUDA_CHECK(cudaMemcpy(&go_again, d_go_again, sizeof(bool), cudaMemcpyDeviceToHost));
@@ -180,7 +180,7 @@ int* computeSCC(const CSRGraph& graph, int blocks) {
         CUDA_CHECK(cudaMemcpyAsync(&wl_size, d_wl_size, sizeof(int), cudaMemcpyDeviceToHost));
 
         // Local re-initialization
-        CUDA_CHECK(cudaMemsetAsync(d_go_again, 0, sizeof(bool))); // d_goagain = false;
+        CUDA_CHECK(cudaMemsetAsync(d_go_again, 0, sizeof(bool))); // d_go_again = false;
         localInit<<<blocks, NumThPerBlock>>>(graph.num_nodes, d_io_max, d_go_again);
         // copy back go_again
         CUDA_CHECK(cudaMemcpy(&go_again, d_go_again, sizeof(bool), cudaMemcpyDeviceToHost));
@@ -206,29 +206,30 @@ int* computeSCC(const CSRGraph& graph, int blocks) {
     return ssc_lookup;
 }
 
+/**
+ * Create a mapping from old SCC IDs to new contiguous SCC IDs, i.e.
+ * new_id[i] = id_map_out[old_id[i]]
+ */
 __global__ void createMapping(const int* const __restrict__ unique_ids, const int num_unique_ids, int* const __restrict__ id_map_out) {
-    const int thread = threadIdx.x + blockIdx.x * NumThPerBlock;
-    const int threads = gridDim.x * NumThPerBlock;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_unique_ids) return;
 
-    for (int i = thread; i < num_unique_ids; i += threads) {
-        id_map_out[unique_ids[i]] = i;
-    }
+    id_map_out[unique_ids[idx]] = idx;
 }
 
+/**
+* Remap SCC IDs in id_map_out using id_map_in
+*/
 __global__ void mapSCCIds(const int* const __restrict__ id_map_in, const int num_nodes, int* const __restrict__ id_map_out) {
-    const int thread = threadIdx.x + blockIdx.x * NumThPerBlock;
-    const int threads = gridDim.x * NumThPerBlock;
-
-    for (int i = thread; i < num_nodes; i += threads) {
-        const int old_id = id_map_out[i];
-        id_map_out[i] = id_map_in[old_id];
-    }
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_nodes) return;
+    
+    const int old_id = id_map_out[idx];
+    id_map_out[idx] = id_map_in[old_id];
 }
 
 /**
  * Remap SCC IDs to contiguous range [0, num_sccs-1]
- * Input: ssc_lookup contains sparse SCC signature values
- * Output: ssc_lookup remapped to dense IDs, returns number of unique SCCs
  */
 int remapSCCIds(int num_nodes, int* d_ssc_lookup, int blocks) {
     // make it so id_map contains contiguous ids from 0 to num_scc-1
@@ -246,13 +247,17 @@ int remapSCCIds(int num_nodes, int* d_ssc_lookup, int blocks) {
     CUDA_CHECK(cudaDeviceSynchronize());
     // d_unique_ids goes out of scope and automatically frees its memory
 
-    mapSCCIds<<<blocks, NumThPerBlock>>>(d_id_map, num_nodes, d_ssc_lookup);
+    int blocks_remap = (num_nodes + NumThPerBlock - 1) / NumThPerBlock;
+    mapSCCIds<<<blocks_remap, NumThPerBlock>>>(d_id_map, num_nodes, d_ssc_lookup);
     CUDA_CHECK(cudaDeviceSynchronize());
     CUDA_CHECK(cudaFree(d_id_map));
     
     return h_scc_node_count;
 }
 
+/**
+ * Create edge list for condensed graph of SCCs
+ */
 __global__ void createEdgeList(const CSRGraph g, const int* const __restrict__ scc_lookup, int2* const __restrict__ scc_edges, int* const __restrict__ scc_edge_count) {
     const int thread = threadIdx.x + blockIdx.x * NumThPerBlock;
     const int threads = gridDim.x * NumThPerBlock;
@@ -273,6 +278,9 @@ __global__ void createEdgeList(const CSRGraph g, const int* const __restrict__ s
     }
 }
 
+/**
+ * Count number of outgoing edges per node to build row_ptr
+ */
 __global__ void countEdgesPerNode(const int2* const __restrict__ edges, const int num_edges, int* const __restrict__ row_ptr) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_edges) return;
@@ -281,6 +289,9 @@ __global__ void countEdgesPerNode(const int2* const __restrict__ edges, const in
     atomicAdd(&row_ptr[edge.x + 1], 1);
 }
 
+/**
+* Build CSRGraph from edge list
+*/
 CSRGraph buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     int* d_row_ptr;
     int* d_col_ind;
@@ -295,8 +306,8 @@ CSRGraph buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Compute the histogram for row_ptr
-    int num_block = (num_edges + NumThPerBlock - 1) / NumThPerBlock;
-    countEdgesPerNode<<<num_block, NumThPerBlock>>>(d_edges, num_edges, d_row_ptr);
+    int blocks_histogram = (num_edges + NumThPerBlock - 1) / NumThPerBlock;
+    countEdgesPerNode<<<blocks_histogram, NumThPerBlock>>>(d_edges, num_edges, d_row_ptr);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Exclusive scan to get row_ptr
@@ -347,6 +358,6 @@ CSRGraph computeCondensedGraph(const CSRGraph& graph) {
 
     // Cleanup
     CUDA_CHECK(cudaFree(d_scc_edges));
-    
+
     return scc_graph;
 }
