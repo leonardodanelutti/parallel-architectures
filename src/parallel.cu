@@ -31,6 +31,11 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpy(d_graph.col_ind, graph.col_ind, graph.num_edges * sizeof(int), cudaMemcpyHostToDevice));
     d_graph.num_nodes = graph.num_nodes;
     d_graph.num_edges = graph.num_edges;
+
+    // Compute the condensed graph of SCCs
+    CSRGraph scc_graph = computeCondensedGraph(d_graph);
+
+    // 
     
     // TODO: Copy results back from device to host
     // CUDA_CHECK(cudaMemcpy(h_result, d_result, bytes, cudaMemcpyDeviceToHost));

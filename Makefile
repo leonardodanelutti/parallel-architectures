@@ -6,8 +6,8 @@ CXX = g++
 NVCC = nvcc
 
 # Compiler flags
-CXXFLAGS = -std=c++11 -O3 -Wall -Wextra
-NVCCFLAGS = -std=c++11 -O3 -arch=compute_80
+CXXFLAGS = -std=c++17 -O3 -Wall -Wextra
+NVCCFLAGS = -std=c++17 -O3 -arch=compute_80 --extended-lambda
 
 # Directories
 SRC_DIR = src
@@ -123,7 +123,7 @@ help:
 	@echo ""
 	@echo "Requirements:"
 	@echo "  - NVIDIA CUDA Toolkit (nvcc compiler)"
-	@echo "  - C++ compiler with C++11 support (g++)"
+	@echo "  - C++ compiler with C++17 support (g++)"
 	@echo "  - NVIDIA GPU with compute capability 3.5+"
 	@echo ""
 	@echo "======================================"

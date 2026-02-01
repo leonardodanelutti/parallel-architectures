@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cmath>
+#include <cstring>
 
 /**
  * Common utilities for CUDA educational projects
@@ -66,6 +67,61 @@ int get_vertex_from_literal(int lit) {
     return (lit > 0) ? 2 * lit - 2 : 2 * (-lit) - 1;
 }
 
+/**
+ * Creates a CSR graph from an edge lists.
+ */
+CSRGraph createCSRGraph(int num_nodes, int num_edges, const int2* edge_list) {
+    CSRGraph csr;
+    csr.num_nodes = num_nodes;
+    csr.num_edges = num_edges;
+
+    // Allocate Memory
+    csr.row_ptr = new int[num_nodes + 1];
+    csr.col_ind = new int[num_edges];
+    std::memset(csr.row_ptr, 0, sizeof(int) * (num_nodes + 1));
+
+    // Compute histogram
+    for (int i = 0; i < num_edges; ++i) {
+        int src = edge_list[i].x;
+        if (src < num_nodes) {
+            csr.row_ptr[src + 1]++;
+        }
+    }
+
+    // Prefix Sum
+    for (int i = 0; i < num_nodes; ++i) {
+        csr.row_ptr[i + 1] += csr.row_ptr[i];
+    }
+
+    // Fill col_ind
+    int* current_offset = new int[num_nodes];
+    
+    // Initialize current_offset with the starting positions from row_ptr
+    for(int i = 0; i < num_nodes; ++i) {
+        current_offset[i] = csr.row_ptr[i];
+    }
+
+    for (int i = 0; i < num_edges; ++i) {
+        int src = edge_list[i].x;
+        int dest = edge_list[i].y;
+
+        if (src < num_nodes) {
+            // Place the destination in the correct spot
+            int write_pos = current_offset[src];
+            csr.col_ind[write_pos] = dest;
+
+            // Increment the offset for this specific node so the next edge 
+            // from this source goes into the next slot.
+            current_offset[src]++;
+        }
+    }
+
+    // Clean up temporary memory
+    delete[] current_offset;
+
+    return csr;
+}
+
 
 /**
  * Reads a 2SAT instance from a DIMACS CNF file and constructs its implication graph in CSR format.
@@ -98,15 +154,9 @@ void read2SATInstance(const std::string& filename, int& num_vars, int& num_claus
             file >> num_vars;
             file >> num_clauses;
 
-            // Initialize graph structure
-            graph.num_nodes = num_vars * 2; // each variable has pos and neg
-            graph.num_edges = num_clauses * 2; // each clause adds two implications
-            graph.row_ptr = new int[graph.num_nodes + 1];
-            graph.col_ind = new int[graph.num_edges];
-            
-            // Start reading clauses
+            // Start reading clauses and build edge list
             int lit1, lit2, zero;
-            std::vector<std::pair<int, int>> edges;
+            std::vector<int2> edges;
             for (int i = 0; i < num_clauses; ++i) {
                 file >> lit1 >> lit2 >> zero;
                 // Add edges for implications
@@ -115,23 +165,12 @@ void read2SATInstance(const std::string& filename, int& num_vars, int& num_claus
                 int from2 = get_vertex_from_literal(-lit2);
                 int to2   = get_vertex_from_literal(lit1);
 
-                edges.emplace_back(from1, to1);
-                edges.emplace_back(from2, to2);
+                edges.emplace_back(int2{from1, to1});
+                edges.emplace_back(int2{from2, to2});
             }
 
-            // Build CSR representation
-            std::sort(edges.begin(), edges.end());
-            std::fill(graph.row_ptr, graph.row_ptr + graph.num_nodes + 1, 0);
-
-            int edge_count = graph.num_edges;
-            for (const auto& edge : edges) {
-                graph.row_ptr[edge.first + 1]++;
-                graph.col_ind[--edge_count] = edge.second;
-            }
-
-            for (int i = 1; i <= graph.num_nodes; ++i) {
-                graph.row_ptr[i] += graph.row_ptr[i - 1];
-            }
+            // Create CSR graph using the correct algorithm
+            graph = createCSRGraph(num_vars * 2, edges.size(), edges.data());
 
             break;
         }
