@@ -1,6 +1,7 @@
 #include "../include/common.h"
 #include "../include/cuda_utils.h"
 #include "SCC.cu"
+#include "topo_sort.cu"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -35,7 +36,17 @@ int main(int argc, char* argv[]) {
     // Compute the condensed graph of SCCs
     CSRGraph scc_graph = computeCondensedGraph(d_graph);
 
-    // 
+    // Khan's algorithm for topological sort on the condensed graph, also check for 2i -> 2i+1
+
+    // Calc WCCs
+    // Delete complement WCCs
+
+    // Strategies:
+    // 1. put all sources to true
+    // 2. put all sinks to false
+    // 3. Strategie on a WCC component:
+    //    - sources to true or sinks to false based on which is smaller
+    //    - choose a node, assign a value and delete all reachable nodes, repeat until all nodes are deleted
     
     // TODO: Copy results back from device to host
     // CUDA_CHECK(cudaMemcpy(h_result, d_result, bytes, cudaMemcpyDeviceToHost));
