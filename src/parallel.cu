@@ -36,6 +36,9 @@ int main(int argc, char* argv[]) {
     // Compute the condensed graph of SCCs
     CSRGraph scc_graph = computeCondensedGraph(d_graph);
 
+    // Compute topological sort and level starts for the condensed graph
+    TopoResult topo_result = topologicalSort(scc_graph);
+
     // Khan's algorithm for topological sort on the condensed graph, also check for 2i -> 2i+1
 
     // Calc WCCs
@@ -53,7 +56,12 @@ int main(int argc, char* argv[]) {
     
     
     // TODO: Cleanup
-    // - Free device memory: CUDA_CHECK(cudaFree(d_data));
+    // - Free device memory
+    CUDA_CHECK(cudaFree(d_graph.row_ptr));
+    CUDA_CHECK(cudaFree(d_graph.col_ind));
+    CUDA_CHECK(cudaFree(scc_graph.row_ptr));
+    CUDA_CHECK(cudaFree(scc_graph.col_ind));
+    CUDA_CHECK(cudaFree(topo_result.d_topo_order));
     // Free host memory
     freeCSRGraph(graph);
     // - Destroy CUDA events: CUDA_CHECK(cudaEventDestroy(start));

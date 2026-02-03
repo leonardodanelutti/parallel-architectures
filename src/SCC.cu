@@ -212,17 +212,17 @@ int* computeSCC(const CSRGraph& graph, int blocks) {
     CUDA_CHECK(cudaFree(d_go_again));
 
     // Convert io_max to just one signature value per node
-    int *ssc_lookup;
-    CUDA_CHECK(cudaMalloc(&ssc_lookup, graph.num_nodes * sizeof(int)));
+    int *d_ssc_lookup;
+    CUDA_CHECK(cudaMalloc(&d_ssc_lookup, graph.num_nodes * sizeof(int)));
     thrust::device_ptr<int2> dev_io_max_ptr(d_io_max);
-    thrust::device_ptr<int> dev_id_map_ptr(ssc_lookup);
+    thrust::device_ptr<int> dev_id_map_ptr(d_ssc_lookup);
     thrust::transform(dev_io_max_ptr, dev_io_max_ptr + graph.num_nodes, dev_id_map_ptr, [] __device__ (const int2& val) {
         return val.x;
     });
     CUDA_CHECK(cudaDeviceSynchronize());
     CUDA_CHECK(cudaFree(d_io_max));
 
-    return ssc_lookup;
+    return d_ssc_lookup;
 }
 
 /**
@@ -372,10 +372,10 @@ CSRGraph computeCondensedGraph(const CSRGraph& graph) {
     // allocate GPU memory
     const int blocks = 80; // SMs * (maxThreadsPerSM / ThreadsPerBlock)
 
-    int *ssc_lookup = computeSCC(graph, blocks);
+    int *d_ssc_lookup = computeSCC(graph, blocks);
 
     // Remap sparse SCC IDs to dense range [0, num_sccs-1]
-    const int scc_node_count = remapSCCIds(graph.num_nodes, ssc_lookup, blocks);
+    const int scc_node_count = remapSCCIds(graph.num_nodes, d_ssc_lookup, blocks);
 
     // Create new edge list for condensed graph
     int2* d_scc_edges;
@@ -384,10 +384,10 @@ CSRGraph computeCondensedGraph(const CSRGraph& graph) {
     CUDA_CHECK(cudaMalloc(&d_scc_edge_count, sizeof(int)));
     CUDA_CHECK(cudaMemset(d_scc_edge_count, 0, sizeof(int)));
 
-    createEdgeList<<<blocks, NumThPerBlock>>>(graph, ssc_lookup, d_scc_edges, d_scc_edge_count);
+    createEdgeList<<<blocks, NumThPerBlock>>>(graph, d_ssc_lookup, d_scc_edges, d_scc_edge_count);
     CUDA_CHECK(cudaDeviceSynchronize());
     // TODO: Maybe I need this later
-    CUDA_CHECK(cudaFree(ssc_lookup));
+    CUDA_CHECK(cudaFree(d_ssc_lookup));
     CUDA_CHECK(cudaFree(d_scc_edge_count));
 
     // Build CSR representation of the condensed graph

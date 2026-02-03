@@ -2,6 +2,14 @@
 #include "../include/common.h"
 #include "../include/cuda_utils.h"
 
+#include <vector>
+
+struct TopoResult {
+    int* d_topo_order;
+    std::vector<int> level_starts;
+    int num_levels;
+};
+
 // Compute in-degrees of each node
 __global__ void computeInDegrees(
     const int* const __restrict__ col_ind, 
@@ -37,59 +45,56 @@ __global__ void processFrontier(
     const int* const __restrict__ row_ptr, 
     const int* const __restrict__ col_ind, 
     int* const __restrict__ in_degree, 
-    const int* const __restrict__ queue_in,
-    const int queue_in_size,
-    int* const __restrict__ queue_out,
-    int* const __restrict__ queue_out_size,
     int* const __restrict__ topo_order,
-    int* const __restrict__ topo_order_size
+    int* const __restrict__ global_counter,
+    int current_level_start,
+    int current_level_end
 ) {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    int idx = current_level_start + tid;
 
-    if (tid < queue_in_size) {
-        // take element from input queue
-        int u = queue_in[tid];
+    if (idx >= current_level_end) return;
 
-        // Add to topological order
-        int order_idx = atomicAdd(topo_order_size, 1);
-        topo_order[order_idx] = u;
-
-        // "Remove" the node by decreasing in-degrees of its neighbors
-        for (int edge_idx = row_ptr[u]; edge_idx < row_ptr[u + 1]; edge_idx++) {
-            int v = col_ind[edge_idx];
-            int new_in_degree = atomicSub(&in_degree[v], 1) - 1;
-            if (new_in_degree == 0) {
-                // Add to output queue
-                int out_idx = atomicAdd(queue_out_size, 1);
-                queue_out[out_idx] = v;
-            }
+    // take element from input queue
+    int u = topo_order[idx];
+    
+    // "Remove" the node by decreasing in-degrees of its neighbors
+    for (int edge_idx = row_ptr[u]; edge_idx < row_ptr[u + 1]; edge_idx++) {
+        int v = col_ind[edge_idx];
+        
+        int old_in_degree = atomicSub(&in_degree[v], 1);
+        if (old_in_degree == 1) {
+            // Add to output queue
+            int out_idx = atomicAdd(global_counter, 1);
+            topo_order[out_idx] = v;
         }
     }
 }
 
-int* topologicalSort(const CSRGraph& d_graph) {
+TopoResult topologicalSort(const CSRGraph& d_graph) {
+    TopoResult result{};
     int num_nodes = d_graph.num_nodes;
     int num_edges = d_graph.num_edges;
 
-    // Allocate device memory for topological order and its size
+    // Allocate device memory for topological order
     int* d_topo_order;
     CUDA_CHECK(cudaMalloc(&d_topo_order, num_nodes * sizeof(int)));
-    int* d_topo_order_size;
-    CUDA_CHECK(cudaMalloc(&d_topo_order_size, sizeof(int)));
-    CUDA_CHECK(cudaMemset(d_topo_order_size, 0, sizeof(int)));
+
+    // Counter for the back of the topo order queue
+    int* d_counter;
+    CUDA_CHECK(cudaMalloc(&d_counter, sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_counter, 0, sizeof(int)));
+
+    result.d_topo_order = d_topo_order;
+
+    // Prepare host memory for level starts
+    result.level_starts.clear();
+    result.level_starts.reserve(num_nodes + 1);
 
     // Allocate device memory for in-degrees and queue
     int* d_in_degree;
     CUDA_CHECK(cudaMalloc(&d_in_degree, num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMemset(d_in_degree, 0, num_nodes * sizeof(int)));
-
-    int* d_queue_in;
-    int* d_queue_out;
-    CUDA_CHECK(cudaMalloc(&d_queue_in, num_nodes * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_queue_out, num_nodes * sizeof(int)));
-    int* d_queue_size;
-    CUDA_CHECK(cudaMalloc(&d_queue_size, sizeof(int)));
-    CUDA_CHECK(cudaMemset(d_queue_size, 0, sizeof(int)));
 
     // Compute in-degrees
     int blockSize = 256;
@@ -99,45 +104,39 @@ int* topologicalSort(const CSRGraph& d_graph) {
 
     // Find initial zero in-degree nodes
     int numBlocksNodes = (num_nodes + blockSize - 1) / blockSize;
-    findZeros<<<numBlocksNodes, blockSize>>>(d_in_degree, num_nodes, d_queue_in, d_queue_size);
+    findZeros<<<numBlocksNodes, blockSize>>>(d_in_degree, num_nodes, d_topo_order, d_counter);
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Process the queue
-    int h_queue_size;
-    CUDA_CHECK(cudaMemcpy(&h_queue_size, d_queue_size, sizeof(int), cudaMemcpyDeviceToHost));
+    result.level_starts.push_back(0);
 
-    while (h_queue_size > 0) {
+    while (true) {
+        int processed_count;
+        CUDA_CHECK(cudaMemcpy(&processed_count, d_counter, sizeof(int), cudaMemcpyDeviceToHost));
 
-        int blockSize = 256;
-        int numBlocksQueue = (h_queue_size + blockSize - 1) / blockSize;
+        int prev_level_start = result.level_starts.back();
+        int current_level_count = processed_count - prev_level_start;
 
-        CUDA_CHECK(cudaMemset(d_queue_size, 0, sizeof(int)));
-        
-        processFrontier<<<numBlocksQueue, blockSize>>>(
-            d_graph.row_ptr, 
-            d_graph.col_ind, 
-            d_in_degree, 
-            d_queue_in,
-            h_queue_size,
-            d_queue_out,
-            d_queue_size,
+        if (current_level_count == 0) break; // No more nodes to process
+
+        result.level_starts.push_back(processed_count);
+
+        // Process current level
+        int numBlocksLevel = (current_level_count + blockSize - 1) / blockSize;
+        processFrontier<<<numBlocksLevel, blockSize>>>(
+            d_graph.row_ptr,
+            d_graph.col_ind,
+            d_in_degree,
             d_topo_order,
-            d_topo_order_size
+            d_counter,
+            prev_level_start,
+            processed_count
         );
-        CUDA_CHECK(cudaDeviceSynchronize());
-
-        CUDA_CHECK(cudaMemcpy(&h_queue_size, d_queue_size, sizeof(int), cudaMemcpyDeviceToHost));
-
-        // Swap queues
-        std::swap(d_queue_in, d_queue_out);
     }
 
-    // Clean up
+    // Clean up intermediate arrays
     CUDA_CHECK(cudaFree(d_in_degree));
-    CUDA_CHECK(cudaFree(d_queue_in));
-    CUDA_CHECK(cudaFree(d_queue_out));
-    CUDA_CHECK(cudaFree(d_queue_size));
-    CUDA_CHECK(cudaFree(d_topo_order_size));
+    CUDA_CHECK(cudaFree(d_counter));
 
-    return d_topo_order;
+    result.num_levels = result.level_starts.size() - 1;
+    return result;
 }
