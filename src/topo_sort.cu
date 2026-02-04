@@ -133,7 +133,7 @@ TopoResult topologicalSort(const CSRGraph& d_graph) {
         );
     }
 
-    // Clean up intermediate arrays
+    // Clean up
     CUDA_CHECK(cudaFree(d_in_degree));
     CUDA_CHECK(cudaFree(d_counter));
 

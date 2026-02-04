@@ -2,6 +2,7 @@
 #include "../include/cuda_utils.h"
 #include "SCC.cu"
 #include "topo_sort.cu"
+#include "back_bone.cu"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -36,10 +37,15 @@ int main(int argc, char* argv[]) {
     // Compute the condensed graph of SCCs
     CSRGraph scc_graph = computeCondensedGraph(d_graph);
 
-    // Compute topological sort and level starts for the condensed graph
+    // Compute topological sort and levels for the condensed graph
     TopoResult topo_result = topologicalSort(scc_graph);
 
-    // Khan's algorithm for topological sort on the condensed graph, also check for 2i -> 2i+1
+    int* backbone_assignments = compute_backbone(
+        scc_graph,
+        nullptr, // TODO: Pass actual SCC lookup array
+        num_vars,
+        topo_result
+    );
 
     // Calc WCCs
     // Delete complement WCCs
