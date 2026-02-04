@@ -8,6 +8,11 @@
 #include <thrust/transform.h>
 #include <thrust/unique.h>
 
+struct CondensedGraphResult {
+    CSRGraph graph;
+    int* d_scc_lookup;
+};
+
 
 /**
  * Initialize:
@@ -333,6 +338,7 @@ CSRGraph buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     int* d_col_ind;
     CUDA_CHECK(cudaMalloc(&d_row_ptr, (num_nodes + 1) * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_col_ind, num_edges * sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_row_ptr, 0, (num_nodes + 1) * sizeof(int)));
 
     // Sort edge list (required to make CSR rows contiguous)
     thrust::device_ptr<int2> dev_edges_ptr(d_edges);
@@ -346,9 +352,9 @@ CSRGraph buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     countEdgesPerNode<<<blocks_histogram, NumThPerBlock>>>(d_edges, num_edges, d_row_ptr);
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    // Exclusive scan to get row_ptr
+    // Compute prefix sum to get row_ptr
     thrust::device_ptr<int> dev_scc_row_ptr_ptr(d_row_ptr);
-    thrust::exclusive_scan(dev_scc_row_ptr_ptr, dev_scc_row_ptr_ptr + num_nodes + 1, dev_scc_row_ptr_ptr);
+    thrust::inclusive_scan(dev_scc_row_ptr_ptr, dev_scc_row_ptr_ptr + num_nodes + 1, dev_scc_row_ptr_ptr);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Create col_ind by copying from edge list the second element of each edge
@@ -368,7 +374,7 @@ CSRGraph buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     return csr_graph;
 }
 
-CSRGraph computeCondensedGraph(const CSRGraph& graph) {
+CondensedGraphResult computeCondensedGraph(const CSRGraph& graph) {
     // allocate GPU memory
     const int blocks = 80; // SMs * (maxThreadsPerSM / ThreadsPerBlock)
 
@@ -386,15 +392,16 @@ CSRGraph computeCondensedGraph(const CSRGraph& graph) {
 
     createEdgeList<<<blocks, NumThPerBlock>>>(graph, d_ssc_lookup, d_scc_edges, d_scc_edge_count);
     CUDA_CHECK(cudaDeviceSynchronize());
-    // TODO: Maybe I need this later
-    CUDA_CHECK(cudaFree(d_ssc_lookup));
+
+    int h_scc_edge_count = 0;
+    CUDA_CHECK(cudaMemcpy(&h_scc_edge_count, d_scc_edge_count, sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(d_scc_edge_count));
 
     // Build CSR representation of the condensed graph
-    CSRGraph scc_graph = buildCSRFromEdgeList(d_scc_edges, graph.num_edges, scc_node_count);
+    CSRGraph scc_graph = buildCSRFromEdgeList(d_scc_edges, h_scc_edge_count, scc_node_count);
 
     // Cleanup
     CUDA_CHECK(cudaFree(d_scc_edges));
 
-    return scc_graph;
+    return CondensedGraphResult{scc_graph, d_ssc_lookup};
 }

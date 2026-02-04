@@ -131,6 +131,8 @@ TopoResult topologicalSort(const CSRGraph& d_graph) {
             prev_level_start,
             processed_count
         );
+        CUDA_CHECK(cudaGetLastError());
+        CUDA_CHECK(cudaDeviceSynchronize());
     }
 
     // Clean up
