@@ -85,11 +85,11 @@ __global__ void resolve_reachability_batch(
     // node u in the DAG receive the bit? If yes, it must have come from 
     // node v in the DAG
     if (dag_node_masks[u_dag] & bit) {
-        d_assign_status[u_orig] = 2;
-        d_assign_status[v_orig] = 1;
+        d_assign_status[u_dag] = 2;
+        d_assign_status[v_dag] = 1;
     } else if (dag_node_masks[v_dag] & bit) {
-        d_assign_status[u_orig] = 1;
-        d_assign_status[v_orig] = 2;
+        d_assign_status[u_dag] = 1;
+        d_assign_status[v_dag] = 2;
     }
 }
 

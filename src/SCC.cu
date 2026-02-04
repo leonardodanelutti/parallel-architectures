@@ -347,6 +347,15 @@ CSRGraph buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     });
     CUDA_CHECK(cudaDeviceSynchronize());
 
+    // Deduplicate identical edges (same src,dst)
+    auto new_end = thrust::unique(dev_edges_ptr, dev_edges_ptr + num_edges,
+        [] __device__ (const int2& a, const int2& b) {
+            return a.x == b.x && a.y == b.y;
+        }
+    );
+    num_edges = static_cast<int>(new_end - dev_edges_ptr);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
     // Compute the histogram for row_ptr
     int blocks_histogram = (num_edges + NumThPerBlock - 1) / NumThPerBlock;
     countEdgesPerNode<<<blocks_histogram, NumThPerBlock>>>(d_edges, num_edges, d_row_ptr);
