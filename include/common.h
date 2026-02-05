@@ -17,6 +17,13 @@
 
 // Default CUDA block size (threads per block)
 #define NumThPerBlock 512
+// Default max number of blocks
+#define MaxBlocks 80 // SMs * (maxThreadsPerSM / ThreadsPerBlock)
+
+int gridStrideBlocks(int number_of_elements, int threads_per_block = NumThPerBlock, int max_blocks = MaxBlocks) {
+    int blocks = (number_of_elements + NumThPerBlock - 1) / NumThPerBlock;
+    return (blocks > MaxBlocks) ? MaxBlocks : blocks;
+}
 
 /**
  * Timer class for performance benchmarking

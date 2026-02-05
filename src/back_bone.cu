@@ -41,21 +41,22 @@ __global__ void dag_sweep(
     int level_start, int level_end
 ) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int idx = level_start + tid;
-    if (idx >= level_end) return;
+    int stride = blockDim.x * gridDim.x;
 
-    int u = sorted_nodes[idx];
+    for (int idx = level_start + tid; idx < level_end; idx += stride) {
+        int u = sorted_nodes[idx];
 
-    // Bits propagated from parents
-    unsigned int incoming = node_masks[u];
-    // Add bits that correspond to literals present in this node
-    unsigned int to_propagate = incoming | injection_masks[u];
+        // Bits propagated from parents
+        unsigned int incoming = node_masks[u];
+        // Add bits that correspond to literals present in this node
+        unsigned int to_propagate = incoming | injection_masks[u];
 
-    // Update and propagate to children
-    if (to_propagate != 0) {
-        for (int i = row_ptr[u]; i < row_ptr[u+1]; i++) {
-            int v = col_ind[i];
-            atomicOr(&node_masks[v], to_propagate);
+        // Update and propagate to children
+        if (to_propagate != 0) {
+            for (int i = row_ptr[u]; i < row_ptr[u+1]; i++) {
+                int v = col_ind[i];
+                atomicOr(&node_masks[v], to_propagate);
+            }
         }
     }
 }
@@ -138,11 +139,9 @@ int* compute_backbone(
 
             if (count == 0) continue;
 
-            int threads = 256;
-            int blocks = (count + threads - 1) / threads;
-
             // Propagate reachability for this level
-            dag_sweep<<<blocks, threads>>>(
+            int blocks = gridStrideBlocks(count);
+            dag_sweep<<<blocks, NumThPerBlock>>>(
                 d_graph.row_ptr,
                 d_graph.col_ind,
                 topo_sort.d_topo_order,

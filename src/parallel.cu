@@ -3,6 +3,7 @@
 #include "SCC.cu"
 #include "topo_sort.cu"
 #include "back_bone.cu"
+#include "WCC.cu"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {

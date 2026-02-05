@@ -17,9 +17,10 @@ __global__ void computeInDegrees(
     int num_edges
 ) {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
 
-    if (tid < num_edges) {
-        int target_node = col_ind[tid];
+    for (int i = tid; i < num_edges; i += stride) {
+        int target_node = col_ind[i];
         atomicAdd(&in_degree[target_node], 1);
     }
 }
@@ -31,12 +32,13 @@ __global__ void findZeros(
     int* const __restrict__ queue_count
 ) {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
 
-    if (tid < num_nodes) {
-        if (in_degree[tid] == 0) {
+    for (int i = tid; i < num_nodes; i += stride) {
+        if (in_degree[i] == 0) {
             // Reserve a spot in the queue
             int idx = atomicAdd(queue_count, 1);
-            queue[idx] = tid;
+            queue[idx] = i;
         }
     }
 }
@@ -51,22 +53,22 @@ __global__ void processFrontier(
     int current_level_end
 ) {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    int idx = current_level_start + tid;
+    int stride = blockDim.x * gridDim.x;
 
-    if (idx >= current_level_end) return;
-
-    // take element from input queue
-    int u = topo_order[idx];
-    
-    // "Remove" the node by decreasing in-degrees of its neighbors
-    for (int edge_idx = row_ptr[u]; edge_idx < row_ptr[u + 1]; edge_idx++) {
-        int v = col_ind[edge_idx];
+    for (int idx = current_level_start + tid; idx < current_level_end; idx += stride) {
+        // take element from input queue
+        int u = topo_order[idx];
         
-        int old_in_degree = atomicSub(&in_degree[v], 1);
-        if (old_in_degree == 1) {
-            // Add to output queue
-            int out_idx = atomicAdd(global_counter, 1);
-            topo_order[out_idx] = v;
+        // "Remove" the node by decreasing in-degrees of its neighbors
+        for (int edge_idx = row_ptr[u]; edge_idx < row_ptr[u + 1]; edge_idx++) {
+            int v = col_ind[edge_idx];
+            
+            int old_in_degree = atomicSub(&in_degree[v], 1);
+            if (old_in_degree == 1) {
+                // Add to output queue
+                int out_idx = atomicAdd(global_counter, 1);
+                topo_order[out_idx] = v;
+            }
         }
     }
 }
@@ -97,14 +99,13 @@ TopoResult topologicalSort(const CSRGraph& d_graph) {
     CUDA_CHECK(cudaMemset(d_in_degree, 0, num_nodes * sizeof(int)));
 
     // Compute in-degrees
-    int blockSize = 256;
-    int numBlocksEdges = (num_edges + blockSize - 1) / blockSize;
-    computeInDegrees<<<numBlocksEdges, blockSize>>>(d_graph.col_ind, d_in_degree, num_edges);
+    int numBlocksEdges = gridStrideBlocks(num_edges);
+    computeInDegrees<<<numBlocksEdges, NumThPerBlock>>>(d_graph.col_ind, d_in_degree, num_edges);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Find initial zero in-degree nodes
-    int numBlocksNodes = (num_nodes + blockSize - 1) / blockSize;
-    findZeros<<<numBlocksNodes, blockSize>>>(d_in_degree, num_nodes, d_topo_order, d_counter);
+    int numBlocksNodes = gridStrideBlocks(num_nodes);
+    findZeros<<<numBlocksNodes, NumThPerBlock>>>(d_in_degree, num_nodes, d_topo_order, d_counter);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     result.level_starts.push_back(0);
@@ -121,8 +122,8 @@ TopoResult topologicalSort(const CSRGraph& d_graph) {
         result.level_starts.push_back(processed_count);
 
         // Process current level
-        int numBlocksLevel = (current_level_count + blockSize - 1) / blockSize;
-        processFrontier<<<numBlocksLevel, blockSize>>>(
+        int numBlocksLevel = gridStrideBlocks(current_level_count);
+        processFrontier<<<numBlocksLevel, NumThPerBlock>>>(
             d_graph.row_ptr,
             d_graph.col_ind,
             d_in_degree,
