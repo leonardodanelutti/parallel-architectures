@@ -4,10 +4,18 @@
 /**
  * Initialize each node to be its own parent
  */
-__global__ void initParent(int* parent, int num_nodes) {
+__global__ void initParent(
+    int* const __restrict__ parent, 
+    const int* const __restrict__ assign_status, 
+    const int num_nodes
+) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = tid; i < num_nodes; i += stride) {
+        if (assign_status && assign_status[i] != 0) {
+            parent[i] = -1;
+            continue;
+        }
         parent[i] = i;
     }
 }
@@ -15,11 +23,21 @@ __global__ void initParent(int* parent, int num_nodes) {
 /*
  * For each edge (u,v), attempt to hook the higher ID root to the lower ID root.
  */
-__global__ void hook(const int* row_ptr, const int* col_ind, int* parent, bool* d_changed, int num_nodes) {
+__global__ void hook(
+    const int* const __restrict__ row_ptr, 
+    const int* const __restrict__ col_ind, 
+    const int* const __restrict__ assign_status, 
+    int* const __restrict__ parent, 
+    volatile bool* const __restrict__ d_changed, 
+    const int num_nodes
+) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
 
     for (int u = tid; u < num_nodes; u += stride) {
+        if (assign_status && assign_status[u] != 0) {
+            continue;
+        }
         int start_edge = row_ptr[u];
         int end_edge = row_ptr[u + 1];
 
@@ -27,6 +45,9 @@ __global__ void hook(const int* row_ptr, const int* col_ind, int* parent, bool* 
 
         for (int e = start_edge; e < end_edge; ++e) {
             int v = col_ind[e];
+            if (assign_status && assign_status[v] != 0) {
+                continue;
+            }
             int root_v = parent[v];
 
             if (root_u != root_v) {
@@ -51,10 +72,18 @@ __global__ void hook(const int* row_ptr, const int* col_ind, int* parent, bool* 
 /*
  * Compress the trees by making each node point to its grandparent
  */
-__global__ void compress(int* parent, int num_nodes, bool* d_changed) {
+__global__ void compress(
+    int* const __restrict__ parent, 
+    const int* const __restrict__ assign_status, 
+    const int num_nodes, 
+    volatile bool* const __restrict__ d_changed
+) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = tid; i < num_nodes; i += stride) {
+        if (assign_status && assign_status[i] != 0) {
+            continue;
+        }
         int p = parent[i];
         int gp = parent[p];
 
@@ -68,10 +97,17 @@ __global__ void compress(int* parent, int num_nodes, bool* d_changed) {
 /*
 * Flatten the trees by making each node point to its grandparent until convergence
 */
-__global__ void finalFlatten(int* parent, int num_nodes) {
+__global__ void finalFlatten(
+    int* const __restrict__ parent, 
+    const int* const __restrict__ assign_status, 
+    const int num_nodes
+) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = tid; i < num_nodes; i += stride) {
+        if (assign_status && assign_status[i] != 0) {
+            continue;
+        }
         int p = parent[i];
         while (p != parent[p]) {
             p = parent[p];
@@ -80,7 +116,7 @@ __global__ void finalFlatten(int* parent, int num_nodes) {
     }
 }
 
-int* computeWCC(CSRGraph& graph) {
+int* computeWCC(CSRGraph& graph, const int* assign_status) {
     // Allocate device memory
     int* d_parent;
     bool* d_changed;
@@ -90,7 +126,7 @@ int* computeWCC(CSRGraph& graph) {
 
     // Initialize Parents
     int blocks = gridStrideBlocks(num_nodes);
-    initParent<<<blocks, NumThPerBlock>>>(d_parent, num_nodes);
+    initParent<<<blocks, NumThPerBlock>>>(d_parent, assign_status, num_nodes);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Hook and Compress until convergence
@@ -101,9 +137,9 @@ int* computeWCC(CSRGraph& graph) {
         CUDA_CHECK(cudaMemcpy(d_changed, &h_changed, sizeof(bool), cudaMemcpyHostToDevice));
 
         // Hook
-        hook<<<blocks, NumThPerBlock>>>(graph.row_ptr, graph.col_ind, d_parent, d_changed, num_nodes);
+        hook<<<blocks, NumThPerBlock>>>(graph.row_ptr, graph.col_ind, assign_status, d_parent, d_changed, num_nodes);
         // Compress
-        compress<<<blocks, NumThPerBlock>>>(d_parent, num_nodes, d_changed);
+        compress<<<blocks, NumThPerBlock>>>(d_parent, assign_status, num_nodes, d_changed);
         
         CUDA_CHECK(cudaDeviceSynchronize());
         
@@ -112,7 +148,7 @@ int* computeWCC(CSRGraph& graph) {
     }
 
     // Final Flattening
-    finalFlatten<<<blocks, NumThPerBlock>>>(d_parent, num_nodes);
+    finalFlatten<<<blocks, NumThPerBlock>>>(d_parent, assign_status, num_nodes);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     // Cleanup

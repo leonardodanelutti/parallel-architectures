@@ -39,6 +39,8 @@ int main(int argc, char* argv[]) {
     CondensedGraphResult condensed = computeCondensedGraph(d_graph);
     CSRGraph scc_graph = condensed.graph;
 
+    // TODO: is it true that scc 2*i is the opposite of scc 2*i+1?
+
     // Compute topological sort and levels for the condensed graph
     TopoResult topo_result = topologicalSort(scc_graph);
 
@@ -48,6 +50,8 @@ int main(int argc, char* argv[]) {
         num_vars,
         topo_result
     );
+
+    int* wcc_parents = computeWCC(scc_graph, backbone_assignments);
 
     // Calc WCCs
     // Delete complement WCCs
@@ -71,6 +75,8 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(scc_graph.col_ind));
     CUDA_CHECK(cudaFree(condensed.d_scc_lookup));
     CUDA_CHECK(cudaFree(topo_result.d_topo_order));
+    CUDA_CHECK(cudaFree(backbone_assignments));
+    CUDA_CHECK(cudaFree(wcc_parents));
     // Free host memory
     freeCSRGraph(graph);
     // - Destroy CUDA events: CUDA_CHECK(cudaEventDestroy(start));
