@@ -165,15 +165,17 @@ int* computeWCC(CSRRepr& graph, const int* assign_status) {
 
 CSRRepr getWCCGrouped(int* d_components, int num_nodes) {
     // Create a sequence [0, 1, 2...]
-    thrust::device_vector<int> d_col_idx(num_nodes);
-    thrust::sequence(d_col_idx.begin(), d_col_idx.end());
+    int* d_col_idx;
+    CUDA_CHECK(cudaMalloc(&d_col_idx, num_nodes * sizeof(int)));
+    thrust::device_ptr<int> d_col_idx_ptr(d_col_idx);
+    thrust::sequence(d_col_idx_ptr, d_col_idx_ptr + num_nodes);
 
     // Sort the component IDs and permute the node IDs accordingly
     thrust::device_ptr<int> d_components_sorted(d_components);
     
     // Sort nodes based on component ID
     // d_components is sorted, d_col_idx is permuted to match
-    thrust::sort_by_key(d_components_sorted, d_components_sorted + num_nodes, d_col_idx.begin());
+    thrust::sort_by_key(d_components_sorted, d_components_sorted + num_nodes, d_col_idx_ptr);
 
     // Allocate space for unique WCC IDs and their counts
     thrust::device_vector<int> d_unique_wcc_ids(num_nodes);
@@ -191,14 +193,19 @@ CSRRepr getWCCGrouped(int* d_components, int num_nodes) {
     int num_wccs = end_it.first - d_unique_wcc_ids.begin();
 
     // Compute the prefix sum
-    thrust::device_vector<int> d_row_ptr(num_wccs + 1);
-    thrust::exclusive_scan(d_wcc_counts.begin(), d_wcc_counts.begin() + num_wccs, d_row_ptr.begin());
+    int* d_row_ptr;
+    CUDA_CHECK(cudaMalloc(&d_row_ptr, (num_wccs + 1) * sizeof(int)));
+    thrust::device_ptr<int> d_row_ptr_ptr(d_row_ptr);
+    thrust::exclusive_scan(d_wcc_counts.begin(), d_wcc_counts.begin() + num_wccs, d_row_ptr_ptr);
+    // The last element of row_ptr should be the total number of nodes
+    int h_last = num_nodes;
+    CUDA_CHECK(cudaMemcpy(d_row_ptr + num_wccs, &h_last, sizeof(int), cudaMemcpyHostToDevice));
 
     CSRRepr wcc_grouped;
     wcc_grouped.num_nodes = num_wccs;
     wcc_grouped.num_edges = num_nodes;
-    wcc_grouped.row_ptr = thrust::raw_pointer_cast(d_row_ptr.data());
-    wcc_grouped.col_ind = thrust::raw_pointer_cast(d_col_idx.data());
+    wcc_grouped.row_ptr = d_row_ptr;
+    wcc_grouped.col_ind = d_col_idx;
 
     return wcc_grouped;
 }
