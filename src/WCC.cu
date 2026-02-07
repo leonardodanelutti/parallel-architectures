@@ -1,6 +1,12 @@
 #include "../include/common.h"
 #include "../include/cuda_utils.h"
 
+#include <thrust/device_ptr.h>
+#include <thrust/device_vector.h>
+#include <thrust/iterator/constant_iterator.h>
+#include <thrust/sequence.h>
+#include <thrust/sort.h>
+
 /**
  * Initialize each node to be its own parent
  */
@@ -12,7 +18,7 @@ __global__ void initParent(
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = tid; i < num_nodes; i += stride) {
-        if (assign_status && assign_status[i] != 0) {
+        if (assign_status && assign_status[i] != -1) {
             parent[i] = -1;
             continue;
         }
@@ -35,7 +41,7 @@ __global__ void hook(
     int stride = blockDim.x * gridDim.x;
 
     for (int u = tid; u < num_nodes; u += stride) {
-        if (assign_status && assign_status[u] != 0) {
+        if (assign_status && assign_status[u] != -1) {
             continue;
         }
         int start_edge = row_ptr[u];
@@ -45,7 +51,7 @@ __global__ void hook(
 
         for (int e = start_edge; e < end_edge; ++e) {
             int v = col_ind[e];
-            if (assign_status && assign_status[v] != 0) {
+            if (assign_status && assign_status[v] != -1) {
                 continue;
             }
             int root_v = parent[v];
@@ -81,7 +87,7 @@ __global__ void compress(
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = tid; i < num_nodes; i += stride) {
-        if (assign_status && assign_status[i] != 0) {
+        if (assign_status && assign_status[i] != -1) {
             continue;
         }
         int p = parent[i];
@@ -105,7 +111,7 @@ __global__ void finalFlatten(
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     for (int i = tid; i < num_nodes; i += stride) {
-        if (assign_status && assign_status[i] != 0) {
+        if (assign_status && assign_status[i] != -1) {
             continue;
         }
         int p = parent[i];
@@ -116,7 +122,7 @@ __global__ void finalFlatten(
     }
 }
 
-int* computeWCC(CSRGraph& graph, const int* assign_status) {
+int* computeWCC(CSRRepr& graph, const int* assign_status) {
     // Allocate device memory
     int* d_parent;
     bool* d_changed;
@@ -155,4 +161,44 @@ int* computeWCC(CSRGraph& graph, const int* assign_status) {
     CUDA_CHECK(cudaFree(d_changed));
 
     return d_parent;
+}
+
+CSRRepr getWCCGrouped(int* d_components, int num_nodes) {
+    // Create a sequence [0, 1, 2...]
+    thrust::device_vector<int> d_col_idx(num_nodes);
+    thrust::sequence(d_col_idx.begin(), d_col_idx.end());
+
+    // Sort the component IDs and permute the node IDs accordingly
+    thrust::device_ptr<int> d_components_sorted(d_components);
+    
+    // Sort nodes based on component ID
+    // d_components is sorted, d_col_idx is permuted to match
+    thrust::sort_by_key(d_components_sorted, d_components_sorted + num_nodes, d_col_idx.begin());
+
+    // Allocate space for unique WCC IDs and their counts
+    thrust::device_vector<int> d_unique_wcc_ids(num_nodes);
+    thrust::device_vector<int> d_wcc_counts(num_nodes);
+
+    // Count the number of nodes in each WCC
+    auto end_it = thrust::reduce_by_key(
+        d_components_sorted, 
+        d_components_sorted + num_nodes, 
+        thrust::constant_iterator<int>(1), // Each occurrence counts as 1
+        d_unique_wcc_ids.begin(), 
+        d_wcc_counts.begin()
+    );
+
+    int num_wccs = end_it.first - d_unique_wcc_ids.begin();
+
+    // Compute the prefix sum
+    thrust::device_vector<int> d_row_ptr(num_wccs + 1);
+    thrust::exclusive_scan(d_wcc_counts.begin(), d_wcc_counts.begin() + num_wccs, d_row_ptr.begin());
+
+    CSRRepr wcc_grouped;
+    wcc_grouped.num_nodes = num_wccs;
+    wcc_grouped.num_edges = num_nodes;
+    wcc_grouped.row_ptr = thrust::raw_pointer_cast(d_row_ptr.data());
+    wcc_grouped.col_ind = thrust::raw_pointer_cast(d_col_idx.data());
+
+    return wcc_grouped;
 }

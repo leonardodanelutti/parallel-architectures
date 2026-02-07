@@ -9,7 +9,7 @@
 #include <thrust/unique.h>
 
 struct CondensedGraphResult {
-    CSRGraph graph;
+    CSRRepr graph;
     int* d_scc_lookup;
 };
 
@@ -20,7 +20,7 @@ struct CondensedGraphResult {
  * - io_max array with (v, max_outgoing_neighbor)
  */
 __global__ void globalInit(
-    const CSRGraph g, 
+    const CSRRepr g, 
     int2* const __restrict__ wl, 
     int2* const __restrict__ io_max
 ) {
@@ -167,7 +167,7 @@ __global__ void removeEdges(
     }
 }
 
-int* computeSCC(const CSRGraph& graph) {
+int* computeSCC(const CSRRepr& graph) {
     // work lists for edges
     int2 *d_wl1, *d_wl2;
     int wl_size = graph.num_edges;
@@ -292,7 +292,7 @@ int remapSCCIds(int num_nodes, int* d_ssc_lookup) {
  * Create edge list for condensed graph of SCCs
  */
 __global__ void createEdgeList(
-    const CSRGraph g, 
+    const CSRRepr g, 
     const int* const __restrict__ scc_lookup, 
     int2* const __restrict__ scc_edges, 
     int* const __restrict__ scc_edge_count
@@ -332,9 +332,9 @@ __global__ void countEdgesPerNode(
 }
 
 /**
-* Build CSRGraph from edge list
+* Build a graph in csr format from its edge list
 */
-CSRGraph buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
+CSRRepr buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     int* d_row_ptr;
     int* d_col_ind;
     CUDA_CHECK(cudaMalloc(&d_row_ptr, (num_nodes + 1) * sizeof(int)));
@@ -375,7 +375,7 @@ CSRGraph buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     });
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    CSRGraph csr_graph;
+    CSRRepr csr_graph;
     csr_graph.num_nodes = num_nodes;
     csr_graph.num_edges = num_edges;
     csr_graph.row_ptr = d_row_ptr;
@@ -384,7 +384,7 @@ CSRGraph buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     return csr_graph;
 }
 
-CondensedGraphResult computeCondensedGraph(const CSRGraph& graph) {
+CondensedGraphResult computeCondensedGraph(const CSRRepr& graph) {
     int *d_ssc_lookup = computeSCC(graph);
 
     // Remap sparse SCC IDs to dense range [0, num_sccs-1]
@@ -406,7 +406,7 @@ CondensedGraphResult computeCondensedGraph(const CSRGraph& graph) {
     CUDA_CHECK(cudaFree(d_scc_edge_count));
 
     // Build CSR representation of the condensed graph
-    CSRGraph scc_graph = buildCSRFromEdgeList(d_scc_edges, h_scc_edge_count, scc_node_count);
+    CSRRepr scc_graph = buildCSRFromEdgeList(d_scc_edges, h_scc_edge_count, scc_node_count);
 
     // Cleanup
     CUDA_CHECK(cudaFree(d_scc_edges));

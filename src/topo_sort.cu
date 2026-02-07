@@ -73,7 +73,7 @@ __global__ void processFrontier(
     }
 }
 
-TopoResult topologicalSort(const CSRGraph& d_graph) {
+TopoResult topologicalSort(const CSRRepr& d_graph) {
     TopoResult result{};
     int num_nodes = d_graph.num_nodes;
     int num_edges = d_graph.num_edges;

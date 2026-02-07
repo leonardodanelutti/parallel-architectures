@@ -19,13 +19,13 @@ int main(int argc, char* argv[]) {
 
     // read 2SAT instance from file
     int num_vars, num_clauses, asp_result;
-    CSRGraph graph;
+    CSRRepr graph;
     read2SATInstance(filename, num_vars, num_clauses, asp_result, graph);
 
     // TODO: Start CUDA event timing
 
     // Allocate device memory
-    CSRGraph d_graph;
+    CSRRepr d_graph;
     CUDA_CHECK(cudaMalloc(&d_graph.row_ptr, (graph.num_nodes + 1) * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_graph.col_ind, graph.num_edges * sizeof(int)));
     
@@ -37,31 +37,27 @@ int main(int argc, char* argv[]) {
 
     // Compute the condensed graph of SCCs
     CondensedGraphResult condensed = computeCondensedGraph(d_graph);
-    CSRGraph scc_graph = condensed.graph;
-
-    // TODO: is it true that scc 2*i is the opposite of scc 2*i+1?
+    CSRRepr scc_graph = condensed.graph;
 
     // Compute topological sort and levels for the condensed graph
     TopoResult topo_result = topologicalSort(scc_graph);
 
     int* backbone_assignments = compute_backbone(
         scc_graph,
-        condensed.d_scc_lookup,
-        num_vars,
         topo_result
     );
 
-    int* wcc_parents = computeWCC(scc_graph, backbone_assignments);
+    int* d_wcc_map = computeWCC(scc_graph, backbone_assignments);
 
-    // Calc WCCs
-    // Delete complement WCCs
+    CSRRepr wcc_grouped = getWCCGrouped(d_wcc_map, scc_graph.num_nodes);
 
-    // Strategies:
-    // 1. put all sources to true
-    // 2. put all sinks to false
-    // 3. Strategie on a WCC component:
-    //    - sources to true or sinks to false based on which is smaller
-    //    - choose a node, assign a value and delete all reachable nodes, repeat until all nodes are deleted
+
+    // 1. Find sources and put to true all sources in even wcc
+    // 2. Find sources and sinks, check witch is less and assign accordingly
+    // 3. Find node with the most outgoing edges, put it to true, remove it and all the nodes ahead and repeat
+    // 4. Find the node with the most outgoing/ingoing edges, put it to true/false accordingly, remove it and all the nodes ahead/behind accordingly and repeat
+    // 5. Find the node that reaches the most nodes forward, remove it and all the nodes ahead and repeat (this is the same as 1)
+    // 6. Find the node that reaches the most nodes forward or backwards, remove it and all the nodes ahead/behind accordingly and repeat
     
     // TODO: Copy results back from device to host
     // CUDA_CHECK(cudaMemcpy(h_result, d_result, bytes, cudaMemcpyDeviceToHost));
@@ -76,9 +72,9 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(condensed.d_scc_lookup));
     CUDA_CHECK(cudaFree(topo_result.d_topo_order));
     CUDA_CHECK(cudaFree(backbone_assignments));
-    CUDA_CHECK(cudaFree(wcc_parents));
+    CUDA_CHECK(cudaFree(d_wcc_map));
     // Free host memory
-    freeCSRGraph(graph);
+    freeCSRRepr(graph);
     // - Destroy CUDA events: CUDA_CHECK(cudaEventDestroy(start));
     
     // std::cout << "CUDA execution completed!" << std::endl;

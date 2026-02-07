@@ -16,7 +16,7 @@ int main() {
     
      // read 2SAT instance from file
     int num_vars, num_clauses, asp_result;
-    CSRGraph graph;
+    CSRRepr graph;
     read2SATInstance("instance_1000v_2500c.cnf", num_vars, num_clauses, asp_result, graph);
     
     // TODO: Run and time your algorithm
@@ -31,7 +31,7 @@ int main() {
     std::cout << "Execution time: " << elapsed << " ms" << std::endl;
     
     // Cleanup
-    freeCSRGraph(graph);
+    freeCSRRepr(graph);
     
     std::cout << "Sequential execution completed!" << std::endl;
     

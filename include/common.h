@@ -53,14 +53,14 @@ public:
 /**
  * Simple CSR Graph structure
  */
-struct CSRGraph {
+struct CSRRepr {
     int num_nodes;
     int num_edges;
     int* row_ptr;
     int* col_ind;
 };
 
-void freeCSRGraph(CSRGraph& graph) {
+void freeCSRRepr(CSRRepr& graph) {
     delete[] graph.row_ptr;
     delete[] graph.col_ind;
 
@@ -77,8 +77,8 @@ int get_vertex_from_literal(int lit) {
 /**
  * Creates a CSR graph from an edge lists.
  */
-CSRGraph createCSRGraph(int num_nodes, int num_edges, const int2* edge_list) {
-    CSRGraph csr;
+CSRRepr createCSRGraph(int num_nodes, int num_edges, const int2* edge_list) {
+    CSRRepr csr;
     csr.num_nodes = num_nodes;
     csr.num_edges = num_edges;
 
@@ -134,7 +134,7 @@ CSRGraph createCSRGraph(int num_nodes, int num_edges, const int2* edge_list) {
  * Reads a 2SAT instance from a DIMACS CNF file and constructs its implication graph in CSR format.
  */
 
-void read2SATInstance(const std::string& filename, int& num_vars, int& num_clauses, int& asp_result, CSRGraph& graph) {
+void read2SATInstance(const std::string& filename, int& num_vars, int& num_clauses, int& asp_result, CSRRepr& graph) {
     std::ifstream file(filename);
     if (!file) {
         std::cerr << "Error opening file: " << filename << std::endl;
