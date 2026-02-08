@@ -14,20 +14,16 @@ struct CondensedGraphResult {
 };
 
 
-/**
- * Initialize:
- * - work list by adding all edges
- * - io_max array with (v, max_outgoing_neighbor)
- */
+// Initialize work list by adding all edges and io_max array with (v, max_outgoing_neighbor)
 __global__ void globalInit(
     const CSRRepr g, 
     int2* const __restrict__ wl, 
     int2* const __restrict__ io_max
 ) {
-    const int thread = threadIdx.x + blockIdx.x * NumThPerBlock;
-    const int threads = gridDim.x * NumThPerBlock;
+    const int tid = threadIdx.x + blockIdx.x * NumThPerBlock;
+    const int stride = gridDim.x * NumThPerBlock;
 
-    for (int i = thread; i < g.num_nodes; i += threads) {
+    for (int i = tid; i < g.num_nodes; i += stride) {
         const int begin = g.row_ptr[i];
         const int end   = g.row_ptr[i + 1];
         int y = i;
@@ -41,21 +37,18 @@ __global__ void globalInit(
     }
 }
 
-
-/**
- * After edges are eliminated, re-initialize io_max to (i, i) for all nodes
- * check if any changes were made and set go_again accordingly
- */
+// After edges are eliminated, re-initialize io_max to (i, i) for all nodes
+// check if any changes were made and set go_again accordingly
 __global__ void localInit(
     const int num_nodes, 
     int2* const __restrict__ io_max, 
     volatile bool* const __restrict__ go_again
 ) {
-    const int thread = threadIdx.x + blockIdx.x * NumThPerBlock;
-    const int threads = gridDim.x * NumThPerBlock;
+    const int tid = threadIdx.x + blockIdx.x * NumThPerBlock;
+    const int stride = gridDim.x * NumThPerBlock;
 
     bool again = false;
-    for (int i = thread; i < num_nodes; i += threads) {
+    for (int i = tid; i < num_nodes; i += stride) {
         const int2 val = io_max[i];
         if (val.x != val.y) {
             io_max[i] = int2{i, i};
@@ -66,30 +59,27 @@ __global__ void localInit(
     // Check if any thread set again to true
     again = __syncthreads_or(again);
     // if not, computation is done
-    if ((thread == 0) && again) {
+    if ((tid == 0) && again) {
         *go_again = true;
     }
 }
 
-
-/**
- * Propagate maximum signatures along the edges in the work list
- * call this function until go_again is false
- */
+// Propagate maximum signatures along the edges in the work list
+// call this function until go_again is false
 __global__ void propagateMax(
     const int2* const __restrict__ wl, 
     const int wl_size, 
     int2* const __restrict__ io_max, 
     volatile bool* const __restrict__ go_again
 ) {
-    const int thread = threadIdx.x + blockIdx.x * NumThPerBlock;
-    const int threads = gridDim.x * NumThPerBlock;
+    const int tid = threadIdx.x + blockIdx.x * NumThPerBlock;
+    const int stride = gridDim.x * NumThPerBlock;
 
     bool updated, again = false;
     do {
         updated = false;
         
-        for (int i = thread; i < wl_size; i += threads) {
+        for (int i = tid; i < wl_size; i += stride) {
             const int2 edge = wl[i];
             const int u = edge.x;
             const int v = edge.y;
@@ -134,11 +124,9 @@ __global__ void propagateMax(
     }
 }
 
-/**
- * Remove edges that cannot be part of an SCC
- * An edge (u,v) can be part of an SCC only if both endpoints have the same signature.
- * Also edges leading to nodes already in an SCC are removed.
- */
+// Remove edges that cannot be part of an SCC
+// An edge (u,v) can be part of an SCC only if both endpoints have the same signature.
+// Also edges leading to nodes already in an SCC are removed.
 __global__ void removeEdges(
     const int2* const __restrict__ wl_in,
     int2* const __restrict__ wl_out, 
@@ -146,10 +134,10 @@ __global__ void removeEdges(
     int* const __restrict__ wl_out_size, 
     const int2* const __restrict__ io_max
 ) {
-    const int thread = threadIdx.x + blockIdx.x * NumThPerBlock;
-    const int threads = gridDim.x * NumThPerBlock;
+    const int tid = threadIdx.x + blockIdx.x * NumThPerBlock;
+    const int stride = gridDim.x * NumThPerBlock;
 
-    for (int i = thread; i < wl_size; i += threads) {
+    for (int i = tid; i < wl_size; i += stride) {
         const int2 edge = wl_in[i];
         const int u = edge.x;
         const int v = edge.y;
@@ -231,10 +219,8 @@ int* computeSCC(const CSRRepr& graph) {
     return d_ssc_lookup;
 }
 
-/**
- * Create a mapping from old SCC IDs to new contiguous SCC IDs, i.e.
- * new_id[i] = id_map_out[old_id[i]]
- */
+// Create a mapping from old SCC IDs to new contiguous SCC IDs, i.e.
+// new_id[i] = id_map_out[old_id[i]]
 __global__ void createMapping(
     const int* const __restrict__ unique_ids, 
     const int num_unique_ids, 
@@ -246,9 +232,7 @@ __global__ void createMapping(
     id_map_out[unique_ids[tid]] = tid;
 }
 
-/**
-* Remap SCC IDs in id_map_out using id_map_in
-*/
+// Remap SCC IDs in id_map_out using id_map_in
 __global__ void mapSCCIds(
     const int* const __restrict__ id_map_in, 
     const int num_nodes, 
@@ -261,9 +245,7 @@ __global__ void mapSCCIds(
     id_map_out[tid] = id_map_in[old_id];
 }
 
-/**
- * Remap SCC IDs to contiguous range [0, num_sccs-1]
- */
+// Remap SCC IDs to contiguous range [0, num_sccs-1]
 int remapSCCIds(int num_nodes, int* d_ssc_lookup) {
     // make it so id_map contains contiguous ids from 0 to num_scc-1
     thrust::device_ptr<int> dev_ssc_lookup_ptr(d_ssc_lookup);
@@ -288,19 +270,17 @@ int remapSCCIds(int num_nodes, int* d_ssc_lookup) {
     return h_scc_node_count;
 }
 
-/**
- * Create edge list for condensed graph of SCCs
- */
+// Create edge list for condensed graph of SCCs
 __global__ void createEdgeList(
     const CSRRepr g, 
     const int* const __restrict__ scc_lookup, 
     int2* const __restrict__ scc_edges, 
     int* const __restrict__ scc_edge_count
 ) {
-    const int thread = threadIdx.x + blockIdx.x * NumThPerBlock;
-    const int threads = gridDim.x * NumThPerBlock;
+    const int tid = threadIdx.x + blockIdx.x * NumThPerBlock;
+    const int stride = gridDim.x * NumThPerBlock;
 
-    for (int i = thread; i < g.num_nodes; i += threads) {
+    for (int i = tid; i < g.num_nodes; i += stride) {
         const int begin = g.row_ptr[i];
         const int end   = g.row_ptr[i + 1];
         const int scc_u = scc_lookup[i];
@@ -316,24 +296,20 @@ __global__ void createEdgeList(
     }
 }
 
-/**
- * Count number of outgoing edges per node to build row_ptr
- */
+// Count number of outgoing edges per node to build row_ptr
 __global__ void countEdgesPerNode(
     const int2* const __restrict__ edges, 
     const int num_edges, 
     int* const __restrict__ row_ptr
 ) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= num_edges) return;
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= num_edges) return;
 
-    const int2 edge = edges[idx];
+    const int2 edge = edges[tid];
     atomicAdd(&row_ptr[edge.x + 1], 1);
 }
 
-/**
-* Build a graph in csr format from its edge list
-*/
+// Build a graph in csr format from its edge list
 CSRRepr buildCSRFromEdgeList(int2* d_edges, int num_edges, int num_nodes) {
     int* d_row_ptr;
     int* d_col_ind;
@@ -412,4 +388,22 @@ CondensedGraphResult computeCondensedGraph(const CSRRepr& graph) {
     CUDA_CHECK(cudaFree(d_scc_edges));
 
     return CondensedGraphResult{scc_graph, d_ssc_lookup};
+}
+
+__global__ void findSccRepresentatives(const int* scc_ids, int* representatives, int num_nodes) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int node_idx = tid; node_idx < num_nodes; node_idx += stride) {
+        int my_scc = scc_ids[node_idx];
+
+        // Atomically set the representative for this SCC
+        atomicExch(&representatives[my_scc], node_idx);
+    }
+}
+
+// Given the mapping from original nodes to their SCC IDs, find one representative node for each SCC
+void findRepresentatives(int* d_scc_ids, int num_nodes, int* d_representatives) {
+    int blocks = gridStrideBlocks(num_nodes);
+    findSccRepresentatives<<<blocks, NumThPerBlock>>>(d_scc_ids, d_representatives, num_nodes);
 }

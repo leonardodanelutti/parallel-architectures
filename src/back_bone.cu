@@ -1,7 +1,7 @@
 #include "../include/common.h"
 #include "../include/cuda_utils.h"
 
-__global__ void dag_sweep(
+__global__ void dagSweep(
     const int* const __restrict__ row_ptr,
     const int* const __restrict__ col_ind,
     const int* const __restrict__ sorted_nodes,
@@ -54,7 +54,7 @@ __global__ void dag_sweep(
 }
 
 
-int* compute_backbone(
+int* computeBackbone(
     const CSRRepr& d_graph,
     const TopoResult& topo_sort
 ) {
@@ -84,7 +84,7 @@ int* compute_backbone(
 
             // Propagate reachability for this level
             int blocks = gridStrideBlocks(count);
-            dag_sweep<<<blocks, NumThPerBlock>>>(
+            dagSweep<<<blocks, NumThPerBlock>>>(
                 d_graph.row_ptr,
                 d_graph.col_ind,
                 topo_sort.d_topo_order,

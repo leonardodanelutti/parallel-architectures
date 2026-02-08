@@ -7,9 +7,7 @@
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 
-/**
- * Initialize each node to be its own parent
- */
+// Initialize each node to be its own parent
 __global__ void initParent(
     int* const __restrict__ parent, 
     const int* const __restrict__ assign_status, 
@@ -146,8 +144,6 @@ int* computeWCC(CSRRepr& graph, const int* assign_status) {
         hook<<<blocks, NumThPerBlock>>>(graph.row_ptr, graph.col_ind, assign_status, d_parent, d_changed, num_nodes);
         // Compress
         compress<<<blocks, NumThPerBlock>>>(d_parent, assign_status, num_nodes, d_changed);
-        
-        CUDA_CHECK(cudaDeviceSynchronize());
         
         // Check convergence flag
         CUDA_CHECK(cudaMemcpy(&h_changed, d_changed, sizeof(bool), cudaMemcpyDeviceToHost));

@@ -101,12 +101,10 @@ TopoResult topologicalSort(const CSRRepr& d_graph) {
     // Compute in-degrees
     int numBlocksEdges = gridStrideBlocks(num_edges);
     computeInDegrees<<<numBlocksEdges, NumThPerBlock>>>(d_graph.col_ind, d_in_degree, num_edges);
-    CUDA_CHECK(cudaDeviceSynchronize());
 
     // Find initial zero in-degree nodes
     int numBlocksNodes = gridStrideBlocks(num_nodes);
     findZeros<<<numBlocksNodes, NumThPerBlock>>>(d_in_degree, num_nodes, d_topo_order, d_counter);
-    CUDA_CHECK(cudaDeviceSynchronize());
 
     result.level_starts.push_back(0);
 
@@ -132,8 +130,6 @@ TopoResult topologicalSort(const CSRRepr& d_graph) {
             prev_level_start,
             processed_count
         );
-        CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaDeviceSynchronize());
     }
 
     // Clean up

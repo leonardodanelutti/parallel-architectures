@@ -163,8 +163,6 @@ void heuristic2(CSRRepr scc_graph, int* backbone_assignments, int* d_wcc_map) {
         backbone_assignments
     );
 
-    // TODO: syncro?
-
     // Cleanup
     CUDA_CHECK(cudaFree(d_num_sinks));
     CUDA_CHECK(cudaFree(d_sorted_wcc));
@@ -214,8 +212,8 @@ __global__ void propagateReachability(
 // Count the number the number of nodes reachable in this batch
 __global__ void accumulate_counts(
     int num_nodes, 
-    const unsigned long long* reach_bits, 
-    int* const total_reach_counts
+    const unsigned long long* const __restrict__ reach_bits, 
+    int* const __restrict__ total_reach_counts
 ) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
@@ -226,7 +224,7 @@ __global__ void accumulate_counts(
 }
 
 // Compute the number of nodes reachable by each node
-// TODO: Maybe we can optime this by only computing the number rechability in each WCC
+// TODO: Maybe we can optime this by only computing the number reachability in each WCC
 void countReachability(CSRRepr scc_graph, TopoResult topo_result, int* assignments, int* d_reach_counts) {
     unsigned long long *d_reach_bits;
     CUDA_CHECK(cudaMalloc(&d_reach_bits, scc_graph.num_nodes * sizeof(unsigned long long)));
@@ -268,7 +266,7 @@ void countReachability(CSRRepr scc_graph, TopoResult topo_result, int* assignmen
 
 
 // Propagate the deletion of a node in both "complement" DAGs, the target node is assigned true
-__global__ void processFrontier(
+__global__ void processFrontierDeletion(
     const int* const __restrict__ row_ptr, 
     const int* const __restrict__ col_ind, 
     int* const __restrict__ assignments, 
@@ -298,27 +296,72 @@ __global__ void processFrontier(
     }
 }
 
-// Propagate deletion of a node in both "complement" DAGs, the target node is assigned true
-void propagateDeletion(CSRRepr scc_graph, int* d_assignments, int target_node) {
+// For each WCC pair choose to set sinks or sources
+__global__ void initTargetFrontier(
+    const int* const __restrict__ max_nodes,
+    const int* const __restrict__ max_counts,
+    int num_pairs,
+    int* const __restrict__ assignments,
+    int* const __restrict__ queue_out,
+    int* const __restrict__ out_count
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int p = tid; p < num_pairs; p += stride) {
+        int dag_1 = 1 + (p * 2);
+        int dag_2 = dag_1 + 1;
+        int max_dag = (max_counts[dag_1] >= max_counts[dag_2]) ? dag_1 : dag_2;
+        int target = max_nodes[max_dag];
+
+        if (target == -1 || max_counts[max_dag] <= 0) {
+            continue;
+        }
+
+        // Assign target and its complement, then enqueue target.
+        if (atomicCAS(&assignments[target], -1, 3) == -1) {
+            assignments[target ^ 1] = 2;
+            int out_idx = atomicAdd(out_count, 1);
+            queue_out[out_idx] = target;
+        }
+    }
+}
+
+
+// Find witch node in each pair of WCC reaches the most nodes, remove it 
+// and all the nodes reachable by it and their complements accordingly
+bool deleteAndPropagate(
+    CSRRepr scc_graph,
+    int* d_assignments,
+    const int* d_max_nodes,
+    const int* d_max_counts,
+    int num_wcc_pairs
+) {
     int *d_queue_in, *d_queue_out, *d_count_out;
     CUDA_CHECK(cudaMalloc(&d_queue_in, scc_graph.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_queue_out, scc_graph.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_count_out, sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_count_out, 0, sizeof(int)));
 
-    // Initialize queue with the target node
-    int false_fixed = 2;
-    int true_fixed = 3;
-    cudaMemcpy(&d_assignments[target_node^1], &two, sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(&d_assignments[target_node], &three, sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_queue_in, &target_node, sizeof(int), cudaMemcpyHostToDevice);
-    int queue_size = 1;
+    // Initialize the frontier with the target nodes to delete (assigned to true)
+    initTargetFrontier<<<gridStrideBlocks(num_wcc_pairs), NumThPerBlock>>>(
+        d_max_nodes,
+        d_max_counts,
+        num_wcc_pairs,
+        d_assignments,
+        d_queue_in,
+        d_count_out
+    );
+
+    int queue_size = 0;
+    CUDA_CHECK(cudaMemcpy(&queue_size, d_count_out, sizeof(int), cudaMemcpyDeviceToHost));
+    bool has_targets = queue_size > 0;
 
     while (queue_size > 0) {
-        // reset output count
         CUDA_CHECK(cudaMemset(d_count_out, 0, sizeof(int)));
-        
-        // Process the current frontier
-        processFrontier<<<gridStrideBlocks(queue_size), NumThPerBlock>>>(
+
+        // Propagate the deletion
+        processFrontierDeletion<<<gridStrideBlocks(queue_size), NumThPerBlock>>>(
             scc_graph.row_ptr,
             scc_graph.col_ind,
             d_assignments,
@@ -328,17 +371,15 @@ void propagateDeletion(CSRRepr scc_graph, int* d_assignments, int target_node) {
             queue_size
         );
 
-        // Get the size of the next frontier
         CUDA_CHECK(cudaMemcpy(&queue_size, d_count_out, sizeof(int), cudaMemcpyDeviceToHost));
-
-        // Swap queues
         std::swap(d_queue_in, d_queue_out);
     }
 
-    // Cleanup
     CUDA_CHECK(cudaFree(d_queue_in));
     CUDA_CHECK(cudaFree(d_queue_out));
     CUDA_CHECK(cudaFree(d_count_out));
+
+    return has_targets;
 }
 
 
@@ -429,22 +470,15 @@ void heuristic3(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
         // Get node with max reachability for each WCC
         getMaxForWCC(d_reach_counts, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_counts);
 
-        // Propagate the deletion of the chosen node and all the nodes ahead accordingly
-        bool h_has_change = false;
-        // DAGs are shifted by 1, the first node corresponds to backbones
-        for (int i = 1; i < wcc_grouped.num_nodes; i=i+2) {
-            int dag_1 = i;
-            // The "complement" DAG
-            int dag_2 = i+1;
-            // TODO: d_max_counts should be copied to host
-            int max_dag = d_max_counts[dag_1] >= d_max_counts[dag_2] ? dag_1 : dag_2;
-            int target_node = d_max_nodes[max_dag];
-            if (target_node == -1 || d_max_counts[max_dag] <= 0) continue;
-            h_has_change = true;
-
-            // Assign the target and propagate in both DAGs
-            propagateDeletion(scc_graph, backbone_assignments, target_node);
-        }
+        // Delete all the nodes reachable by the node with max reachability in each WCC pair
+        int num_wcc_pairs = (wcc_grouped.num_nodes - 1) / 2;
+        bool h_has_change = deleteAndPropagate(
+            scc_graph,
+            backbone_assignments,
+            d_max_nodes,
+            d_max_counts,
+            num_wcc_pairs
+        );
 
         if (!h_has_change) {
             break; // No more nodes to remove
@@ -496,24 +530,15 @@ void heuristic4(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
         // Get node with max reachability for each WCC
         getMaxForWCC(d_reach_counts, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_counts);
 
-        // For each pair of DAGs, choose the one with the higher max reachability count and 
-        // propagate the deletion of the chosen node and all the nodes ahead accordingly
-        bool h_has_change = false;
-        for (int i = 0; i < wcc_grouped.num_nodes; i=i+2) {
-            // DAGs are shifted by 1, the first node corresponds to backbones
-            int dag_1 = i+1;
-            // The "complement" DAG
-            int dag_2 = (i^1)+1;
-            int max_dag = d_max_counts[dag_1] >= d_max_counts[dag_2] ? dag_1 : dag_2;
-            int target_node = d_max_nodes[max_dag];
-
-            // If the max count is 0 or -1, it means there are no more reachable nodes in this WCC, so we can skip
-            if (target_node == -1 || d_max_counts[max_dag] <= 0) continue;
-            h_has_change = true;
-
-            // Assign the target and propagate in both DAGs
-            propagateDeletion(scc_graph, backbone_assignments, target_node);
-        }
+        // Delete all the nodes reachable by the node with max reachability in each WCC pair
+        int num_wcc_pairs = (wcc_grouped.num_nodes - 1) / 2;
+        bool h_has_change = deleteAndPropagate(
+            scc_graph,
+            backbone_assignments,
+            d_max_nodes,
+            d_max_counts,
+            num_wcc_pairs
+        );
 
         if (!h_has_change) {
             break; // No more nodes to remove
