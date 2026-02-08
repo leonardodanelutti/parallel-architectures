@@ -60,6 +60,7 @@ struct CSRRepr {
     int* col_ind;
 };
 
+// Utility function to free CSR graph memory in the host
 void freeCSRRepr(CSRRepr& graph) {
     delete[] graph.row_ptr;
     delete[] graph.col_ind;

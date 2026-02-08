@@ -24,6 +24,18 @@
         } \
     } while(0)
 
+/*
+#define CUSPARSE_CHECK(call) \
+    do { \
+        cusparseStatus_t status = call; \
+        if (status != CUSPARSE_STATUS_SUCCESS) { \
+            std::cerr << "cuSPARSE error at " << __FILE__ << ":" << __LINE__ << " - " \
+                      << cusparseGetErrorString(status) << std::endl; \
+            exit(EXIT_FAILURE); \
+        } \
+    } while(0)
+*/
+
 /**
  * Print GPU device properties
  */
@@ -53,6 +65,68 @@ inline void printDeviceInfo(int device = 0) {
     std::cout << "Memory bus width: " << prop.memoryBusWidth << " bits" << std::endl;
     std::cout << "========================================" << std::endl;
 }
+
+// Utility function to free CSR graph memory in the device
+void freeDeviceCSRRepr(CSRRepr& graph) {
+    CUDA_CHECK(cudaFree(graph.row_ptr));
+    CUDA_CHECK(cudaFree(graph.col_ind));
+
+    graph.num_nodes = 0;
+    graph.num_edges = 0;
+    graph.row_ptr = nullptr;
+    graph.col_ind = nullptr;
+}
+
+// Convert CSR to CSC format using cuSPARSE
+// the input CSR graph is expected to be on the device and the output CSC graph will also be on the device
+/*
+CSRRepr CSR2CSC(const CSRRepr& d_csr) {
+    int *d_csc_col_ptr, *d_csc_row_ind;
+
+    CUDA_CHECK(cudaMalloc(&d_csc_col_ptr, (d_csr.num_nodes + 1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_csc_row_ind, d_csr.num_edges * sizeof(int)));
+
+
+    // Set up cuSPARSE
+    cusparseHandle_t handle;
+    CUSPARSE_CHECK(cusparseCreate(&handle));
+
+    size_t bufferSize = 0;
+    void* d_buffer = nullptr;
+
+    // Get buffer size
+    CUSPARSE_CHECK(cusparseCsr2cscEx2_bufferSize(
+        handle, d_csr.num_nodes, d_csr.num_nodes, d_csr.num_edges,
+        nullptr, d_csr.row_ptr, d_csr.col_ind,
+        nullptr, d_csc_col_ptr, d_csc_row_ind,
+        CUDA_R_32F, CUSPARSE_ACTION_SYMBOLIC,
+        CUSPARSE_INDEX_BASE_ZERO, CUSPARSE_CSR2CSC_ALG_DEFAULT, &bufferSize
+    ));
+
+    CUDA_CHECK(cudaMalloc(&d_buffer, bufferSize));
+
+    // Perform transpose
+    CUSPARSE_CHECK(cusparseCsr2cscEx2(
+        handle, d_csr.num_nodes, d_csr.num_nodes, d_csr.num_edges,
+        nullptr, d_csr.row_ptr, d_csr.col_ind,
+        nullptr, d_csc_col_ptr, d_csc_row_ind,
+        CUDA_R_32F, CUSPARSE_ACTION_SYMBOLIC,
+        CUSPARSE_INDEX_BASE_ZERO, CUSPARSE_CSR2CSC_ALG_DEFAULT, d_buffer
+    ));
+
+    // Clean up
+    CUSPARSE_CHECK(cusparseDestroy(handle));
+    CUDA_CHECK(cudaFree(d_buffer));
+
+    CSRRepr csc;
+    csc.num_nodes = d_csr.num_nodes;
+    csc.num_edges = d_csr.num_edges;
+    csc.row_ptr = d_csc_col_ptr;
+    csc.col_ind = d_csc_row_ind;
+
+    return csc;
+}
+*/
 
 /*
 ========================================

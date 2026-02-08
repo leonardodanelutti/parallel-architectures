@@ -4,6 +4,7 @@
 #include "topo_sort.cu"
 #include "back_bone.cu"
 #include "WCC.cu"
+#include "heuristics.cu"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -48,8 +49,6 @@ int main(int argc, char* argv[]) {
     );
 
     int* d_wcc_map = computeWCC(scc_graph, backbone_assignments);
-
-    CSRRepr wcc_grouped = getWCCGrouped(d_wcc_map, scc_graph.num_nodes);
 
 
     // 1. Find sources and put to true all sources in even wcc

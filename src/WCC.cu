@@ -163,7 +163,10 @@ int* computeWCC(CSRRepr& graph, const int* assign_status) {
     return d_parent;
 }
 
-CSRRepr getWCCGrouped(int* d_components, int num_nodes) {
+// Get CSR representation of the WCC mapping grouped by WCC ID, 
+// i.e. all nodes in the same WCC are contiguous in col_ind and row_ptr indicates the start of each WCC group in col_ind
+// NOTE: d_components_sorted_out should be preallocated with size num_nodes
+CSRRepr getWCCGrouped(int* d_components_in, int* d_components_sorted_out, int num_nodes) {
     // Create a sequence [0, 1, 2...]
     int* d_col_idx;
     CUDA_CHECK(cudaMalloc(&d_col_idx, num_nodes * sizeof(int)));
@@ -171,7 +174,8 @@ CSRRepr getWCCGrouped(int* d_components, int num_nodes) {
     thrust::sequence(d_col_idx_ptr, d_col_idx_ptr + num_nodes);
 
     // Sort the component IDs and permute the node IDs accordingly
-    thrust::device_ptr<int> d_components_sorted(d_components);
+    CUDA_CHECK(cudaMemcpy(d_components_sorted_out, d_components_in, num_nodes * sizeof(int), cudaMemcpyDeviceToDevice));
+    thrust::device_ptr<int> d_components_sorted(d_components_sorted_out);
     
     // Sort nodes based on component ID
     // d_components is sorted, d_col_idx is permuted to match
