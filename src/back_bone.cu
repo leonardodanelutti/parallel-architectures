@@ -5,7 +5,7 @@ __global__ void dag_sweep(
     const int* const __restrict__ row_ptr,
     const int* const __restrict__ col_ind,
     const int* const __restrict__ sorted_nodes,
-    unsigned int* const __restrict__ node_masks, // volatile??
+    unsigned long long* const __restrict__ node_masks, // volatile??
     int* const __restrict__ assign_status,       // volatile??
     int level_start, int level_end,
     int batch_start_pair
@@ -17,14 +17,14 @@ __global__ void dag_sweep(
         int u = sorted_nodes[idx];
 
         // Bits propagated from parents
-        unsigned int my_mask = node_masks[u];
+        unsigned long long my_mask = node_masks[u];
 
         int pair_id = u / 2;
         int bit_idx = pair_id - batch_start_pair;
 
         // u is in the batch
-        if (bit_idx >= 0 && bit_idx < 32) {
-            unsigned int bit = (1u << bit_idx);
+        if (bit_idx >= 0 && bit_idx < 64) {
+            unsigned long long bit = (1ULL << bit_idx);
 
             // If bit is set, it means my "complement" is my ancestor. 
             // Since it's a DAG, I can't reach myself, so it must be them.
@@ -61,18 +61,18 @@ int* compute_backbone(
     int num_nodes = d_graph.num_nodes;
     // Bit i of d_node_masks[j] indicates whether the node j is reachable
     // from node 2*i or node 2*i+1
-    unsigned int* d_node_masks;
+    unsigned long long* d_node_masks;
     // Status flags for original variables, 0 = FALSE, 1 = TRUE
     int* d_assign_status;
-    CUDA_CHECK(cudaMalloc(&d_node_masks, d_graph.num_nodes * sizeof(unsigned int)));
+    CUDA_CHECK(cudaMalloc(&d_node_masks, d_graph.num_nodes * sizeof(unsigned long long)));
     CUDA_CHECK(cudaMalloc(&d_assign_status, d_graph.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMemset(d_assign_status, -1, d_graph.num_nodes * sizeof(int)));
 
-    // Loop over all pairs of literals in chunks of 32
-    for (int batch = 0; batch < num_nodes/2; batch += 32) {
+    // Loop over all pairs of literals in chunks of 64
+    for (int batch = 0; batch < num_nodes/2; batch += 64) {
         
         // Reset masks to 0 for this batch
-        cudaMemset(d_node_masks, 0, d_graph.num_nodes * sizeof(unsigned int));
+        cudaMemset(d_node_masks, 0, d_graph.num_nodes * sizeof(unsigned long long));
 
         // Propagate reachability information through the DAG in topological order
         for (size_t i = 0; i < topo_sort.num_levels; i++) {

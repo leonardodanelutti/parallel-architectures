@@ -43,7 +43,7 @@ __global__ void assignSinks(
     }
 }
 
-// Find sinks and put to false all sinks in odd wcc
+// Find sinks and put to them to false
 void heuristic1(CSRRepr scc_graph, int* backbone_assignments, int* d_wcc_map) {
     int numBlocks = gridStrideBlocks(scc_graph.num_nodes);
 
@@ -197,7 +197,7 @@ __global__ void propagate_reachability(
 __global__ void accumulate_counts(
     int num_nodes, 
     const unsigned long long* reach_bits, 
-    int* total_reach_counts
+    int* const total_reach_counts
 ) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
@@ -440,6 +440,57 @@ void heuristic3(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
 }
 
 // Same as heuristic3 but re-compute the reachability counts after each iteration.
-void heuristic4(CSRRepr scc_graph, int* backbone_assignments, int* d_wcc_map) {
-    // Compute transpose of the graph
+void heuristic4(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignments, int* d_wcc_map) {
+    // Get the reverse mapping
+    int* d_sorted_wcc;
+    CUDA_CHECK(cudaMalloc(&d_sorted_wcc, scc_graph.num_nodes * sizeof(int)));
+    CSRRepr wcc_grouped = getWCCGrouped(d_wcc_map, nullptr, scc_graph.num_nodes);
+
+    // Count reachability for all nodes
+    int* d_reach_counts;
+    CUDA_CHECK(cudaMalloc(&d_reach_counts, scc_graph.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_reach_counts, 0, scc_graph.num_nodes * sizeof(int)));
+
+    // Allocate memory for the max node per WCC and its count
+    int* d_max_nodes;
+    int* d_max_counts;
+    CUDA_CHECK(cudaMalloc(&d_max_nodes, wcc_grouped.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_max_counts, wcc_grouped.num_nodes * sizeof(int)));
+
+    while (true) {
+        // Count reachability for all nodes
+        countReachability(scc_graph, topo_result, backbone_assignments, d_reach_counts);
+
+        // Get node with max reachability for each WCC
+        getMaxForWCC(d_reach_counts, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_counts);
+
+        // For each pair of DAGs, choose the one with the higher max reachability count and 
+        // propagate the deletion of the chosen node and all the nodes ahead accordingly
+        bool h_has_change = false;
+        for (int i = 0; i < wcc_grouped.num_nodes; i=i+2) {
+            // DAGs are shifted by 1, the first node corresponds to backbones
+            int dag_1 = i+1;
+            // The "complement" DAG
+            int dag_2 = (i^1)+1;
+            int max_dag = d_max_counts[dag_1] >= d_max_counts[dag_2] ? dag_1 : dag_2;
+            int target_node = d_max_nodes[max_dag];
+
+            // If the max count is 0 or -1, it means there are no more reachable nodes in this WCC, so we can skip
+            if (target_node == -1 || d_max_counts[max_dag] <= 0) continue;
+            h_has_change = true;
+
+            // Assign the target and propagate in both DAGs
+            propagateDeletion(scc_graph, backbone_assignments, target_node);
+        }
+
+        if (!h_has_change) {
+            break; // No more nodes to remove
+        }
+    }
+
+    // Cleanup
+    CUDA_CHECK(cudaFree(d_sorted_wcc));
+    CUDA_CHECK(cudaFree(d_reach_counts));
+    CUDA_CHECK(cudaFree(d_max_nodes));
+    CUDA_CHECK(cudaFree(d_max_counts));
 }

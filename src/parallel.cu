@@ -51,15 +51,10 @@ int main(int argc, char* argv[]) {
     int* d_wcc_map = computeWCC(scc_graph, backbone_assignments);
 
 
-    // 1. Find sources and put to true all sources in even wcc
+    // 1. Find sinks and put to them to false
     // 2. Find sources and sinks, check witch is less and assign accordingly
-    // 3. Find node with the most outgoing edges, put it to true, remove it and all the nodes ahead and repeat
-    // 4. Find the node with the most outgoing/ingoing edges, put it to true/false accordingly, remove it and all the nodes ahead/behind accordingly and repeat
-    // 5. Find the node that reaches the most nodes forward, remove it and all the nodes ahead and repeat (this is the same as 1)
-    // 6. Find the node that reaches the most nodes forward or backwards, remove it and all the nodes ahead/behind accordingly and repeat
-    
-    // TODO: Copy results back from device to host
-    // CUDA_CHECK(cudaMemcpy(h_result, d_result, bytes, cudaMemcpyDeviceToHost));
+    // 3. Compute the number of nodes reachable forwards or backwards. Find the node that reaches the most nodes, remove it and all the nodes ahead/behind accordingly, and repeat
+    // 4. Same as 3. but re-compute the reachability counts after each iteration.
     
     
     // TODO: Cleanup
