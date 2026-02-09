@@ -6,6 +6,10 @@
 #include "WCC.cu"
 #include "heuristics.cu"
 
+std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int num_nodes);
+void printAssignments(int* d_assignments, int num_nodes, int heuristic);
+void printNumAssignments(int* d_assignments, int num_nodes, int heuristic);
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <filename> [heuristic]" << std::endl;
@@ -55,19 +59,23 @@ int main(int argc, char* argv[]) {
     // 1. Find sinks and put to them to false
     if (heuristic == "1" || heuristic == "all") {
         heuristic1(scc_graph, d_backbone_assignments, d_wcc_map);
+        printAssignments(d_backbone_assignments, scc_graph.num_nodes, 1);
     }
     // 2. Find sources and sinks, check witch is less and assign accordingly
     if (heuristic == "2" || heuristic == "all") {
         heuristic2(scc_graph, d_backbone_assignments, d_wcc_map);
+        printAssignments(d_backbone_assignments, scc_graph.num_nodes, 2);
     }
     // 3. Compute the number of nodes reachable forwards or backwards. Find the node 
     // that reaches the most nodes, remove it and all the nodes ahead/behind accordingly, and repeat
     if (heuristic == "3" || heuristic == "all") {
         heuristic3(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
+        printAssignments(d_backbone_assignments, scc_graph.num_nodes, 3);
     }
     // 4. Same as 3. but re-compute the reachability counts after each iteration.
     if (heuristic == "4" || heuristic == "all") {
         heuristic4(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
+        printAssignments(d_backbone_assignments, scc_graph.num_nodes, 4);
     }
     if (heuristic != "1" && heuristic != "2" && heuristic != "3" && heuristic != "4" && heuristic != "all") {
         std::cerr << "Unknown heuristic: " << heuristic << std::endl;
@@ -83,7 +91,6 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaFree(d_wcc_map));
     // Free host memory
     freeCSRRepr(graph);
-    // - Destroy CUDA events: CUDA_CHECK(cudaEventDestroy(start));
     
     // std::cout << "CUDA execution completed!" << std::endl;
     
@@ -119,4 +126,18 @@ std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int num
     free(h_assignments);
 
     return var_assignments;
+}
+
+void printAssignments(int* d_assignments, int num_nodes, int heuristic) {
+    auto var_assignments = compute_assignments(d_assignments, num_nodes);
+    std::cout << "h" << heuristic << ": " << var_assignments.size() << std::endl;
+    for (const auto& [var, value] : var_assignments) {
+        std::cout << var << value << std::endl;
+    }
+    std::cout << std::endl;
+}
+
+void printNumAssignments(int* d_assignments, int num_nodes, int heuristic) {
+    auto var_assignments = compute_assignments(d_assignments, num_nodes);
+    std::cout << "h" << heuristic << ": " << var_assignments.size() << std::endl;
 }
