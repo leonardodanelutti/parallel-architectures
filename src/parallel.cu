@@ -108,8 +108,6 @@ int main(int argc, char* argv[]) {
             std::cerr << "Expected: 1 | 2 | 3 | 4 | 5 | all" << std::endl;
         }
     }
-
-    // TODO: forwards backwards for method 2
     
     // - Free device memory
     freeDeviceCSRRepr(scc_graph);
