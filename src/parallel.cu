@@ -7,13 +7,13 @@
 #include "heuristics.cu"
 
 std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int num_nodes);
-void printAssignments(int* d_assignments, int num_nodes, int heuristic);
-void printNumAssignments(int* d_assignments, int num_nodes, int heuristic);
+void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic);
+void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic);
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <filename> [heuristic]" << std::endl;
-        std::cerr << "  heuristic: 1 | 2 | 3 | 4 | all (default)" << std::endl;
+        std::cerr << "  heuristic: 1 | 2 | 3 | 4 | 5 | all (default)" << std::endl;
         return 1;
     }
 
@@ -55,32 +55,61 @@ int main(int argc, char* argv[]) {
     );
 
     int* d_wcc_map = computeWCC(scc_graph, d_backbone_assignments);
-    
-    // 1. Find sinks and put to them to false
-    if (heuristic == "1" || heuristic == "all") {
-        heuristic1(scc_graph, d_backbone_assignments, d_wcc_map);
-        printAssignments(d_backbone_assignments, scc_graph.num_nodes, 1);
+
+    auto run_heuristic = [&](int which) {
+        switch (which) {
+            case 1:
+                heuristic1(scc_graph, d_backbone_assignments, d_wcc_map);
+                break;
+            case 2:
+                heuristic2(scc_graph, d_backbone_assignments, d_wcc_map);
+                break;
+            case 3:
+                heuristic3(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
+                break;
+            case 4:
+                heuristic4(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
+                break;
+            case 5:
+                heuristic5(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
+                break;
+            default:
+                return false;
+        }
+        printAssignments(d_backbone_assignments, condensed.d_scc_lookup, scc_graph.num_nodes, d_graph.num_nodes, which);
+        return true;
+    };
+
+    if (heuristic == "all") {
+        int* d_backbone_assignments_base = nullptr;
+        CUDA_CHECK(cudaMalloc(&d_backbone_assignments_base, scc_graph.num_nodes * sizeof(int)));
+        CUDA_CHECK(cudaMemcpy(
+            d_backbone_assignments_base,
+            d_backbone_assignments,
+            scc_graph.num_nodes * sizeof(int),
+            cudaMemcpyDeviceToDevice
+        ));
+
+        for (int which = 1; which <= 5; ++which) {
+            CUDA_CHECK(cudaMemcpy(
+                d_backbone_assignments,
+                d_backbone_assignments_base,
+                scc_graph.num_nodes * sizeof(int),
+                cudaMemcpyDeviceToDevice
+            ));
+            run_heuristic(which);
+        }
+
+        CUDA_CHECK(cudaFree(d_backbone_assignments_base));
+    } else {
+        int which = std::atoi(heuristic.c_str());
+        if (!run_heuristic(which)) {
+            std::cerr << "Unknown heuristic: " << heuristic << std::endl;
+            std::cerr << "Expected: 1 | 2 | 3 | 4 | 5 | all" << std::endl;
+        }
     }
-    // 2. Find sources and sinks, check witch is less and assign accordingly
-    if (heuristic == "2" || heuristic == "all") {
-        heuristic2(scc_graph, d_backbone_assignments, d_wcc_map);
-        printAssignments(d_backbone_assignments, scc_graph.num_nodes, 2);
-    }
-    // 3. Compute the number of nodes reachable forwards or backwards. Find the node 
-    // that reaches the most nodes, remove it and all the nodes ahead/behind accordingly, and repeat
-    if (heuristic == "3" || heuristic == "all") {
-        heuristic3(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
-        printAssignments(d_backbone_assignments, scc_graph.num_nodes, 3);
-    }
-    // 4. Same as 3. but re-compute the reachability counts after each iteration.
-    if (heuristic == "4" || heuristic == "all") {
-        heuristic4(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
-        printAssignments(d_backbone_assignments, scc_graph.num_nodes, 4);
-    }
-    if (heuristic != "1" && heuristic != "2" && heuristic != "3" && heuristic != "4" && heuristic != "all") {
-        std::cerr << "Unknown heuristic: " << heuristic << std::endl;
-        std::cerr << "Expected: 1 | 2 | 3 | 4 | all" << std::endl;
-    }
+
+    // TODO: forwards backwards for method 2
     
     // - Free device memory
     freeDeviceCSRRepr(scc_graph);
@@ -98,11 +127,11 @@ int main(int argc, char* argv[]) {
 }
 
 // compute result from the final assignments array
-std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int num_nodes) {
+std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit) {
     int* d_representatives;
     CUDA_CHECK(cudaMalloc(&d_representatives, num_nodes * sizeof(int)));
     // Get the representative for each node
-    findRepresentatives(d_assignments, num_nodes, d_representatives);
+    findRepresentatives(scc_map, num_lit, d_representatives);
     int* h_representatives = new int[num_nodes];
     int* h_assignments = new int[num_nodes];
     CUDA_CHECK(cudaMemcpy(h_representatives, d_representatives, num_nodes * sizeof(int), cudaMemcpyDeviceToHost));
@@ -128,8 +157,8 @@ std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int num
     return var_assignments;
 }
 
-void printAssignments(int* d_assignments, int num_nodes, int heuristic) {
-    auto var_assignments = compute_assignments(d_assignments, num_nodes);
+void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic) {
+    auto var_assignments = compute_assignments(d_assignments, scc_map, num_nodes, num_lit);
     std::cout << "h" << heuristic << ": " << var_assignments.size() << std::endl;
     for (const auto& [var, value] : var_assignments) {
         std::cout << var << value << std::endl;
@@ -137,7 +166,7 @@ void printAssignments(int* d_assignments, int num_nodes, int heuristic) {
     std::cout << std::endl;
 }
 
-void printNumAssignments(int* d_assignments, int num_nodes, int heuristic) {
-    auto var_assignments = compute_assignments(d_assignments, num_nodes);
+void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic) {
+    auto var_assignments = compute_assignments(d_assignments, scc_map, num_nodes, num_lit);
     std::cout << "h" << heuristic << ": " << var_assignments.size() << std::endl;
 }

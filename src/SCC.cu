@@ -403,7 +403,7 @@ __global__ void findSccRepresentatives(const int* scc_ids, int* representatives,
 }
 
 // Given the mapping from original nodes to their SCC IDs, find one representative node for each SCC
-void findRepresentatives(int* d_scc_ids, int num_nodes, int* d_representatives) {
-    int blocks = gridStrideBlocks(num_nodes);
-    findSccRepresentatives<<<blocks, NumThPerBlock>>>(d_scc_ids, d_representatives, num_nodes);
+void findRepresentatives(int* d_scc_ids, int num_lit, int* d_representatives) {
+    int blocks = gridStrideBlocks(num_lit);
+    findSccRepresentatives<<<blocks, NumThPerBlock>>>(d_scc_ids, d_representatives, num_lit);
 }
