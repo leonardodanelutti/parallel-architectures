@@ -29,13 +29,8 @@ __global__ void dagSweep(
             // If bit is set, it means my "complement" is my ancestor. 
             // Since it's a DAG, I can't reach myself, so it must be them.
             if (my_mask & bit) {
-                if (u % 2 == 0) {
-                    assign_status[u]   = 1;
-                    assign_status[u+1] = 0;
-                } else {
-                    assign_status[u]   = 0;
-                    assign_status[u-1] = 1;
-                }
+                assign_status[u] = 1;
+                assign_status[u^1] = 0;
             }
 
             // Next nodes are reachable by me

@@ -101,6 +101,16 @@ int main(int argc, char* argv[]) {
                 cudaMemcpyDeviceToDevice
             ));
             run_heuristic(which);
+
+            // Check if assignments are correct
+            /*
+            if (which != 1 && which != 2) {
+                int* h_backbone_assignments = new int[scc_graph.num_nodes];
+                CUDA_CHECK(cudaMemcpy(h_backbone_assignments, d_backbone_assignments, scc_graph.num_nodes * sizeof(int), cudaMemcpyDeviceToHost));
+                checkAssignment(scc_graph, h_backbone_assignments);
+                free(h_backbone_assignments);
+            }
+            */
         }
 
         CUDA_CHECK(cudaFree(d_backbone_assignments_base));

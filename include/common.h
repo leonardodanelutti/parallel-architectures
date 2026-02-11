@@ -183,7 +183,33 @@ void read2SATInstance(const std::string& filename, int& num_vars, int& num_claus
             break;
         }
     }
+}
 
+int checkAssignment(const CSRRepr& graph, const int* assignments) {
+    int errors = 0;
+    for (int i = 0; i < graph.num_nodes; ++i) {
+        if (assignments[i] == -1) {
+             std::cerr << "Error: Variable " << i << " is unassigned." << std::endl;
+            errors++;
+             continue;
+        }
+
+        for (int j = graph.row_ptr[i]; j < graph.row_ptr[i + 1]; ++j) {
+            int neighbor = graph.col_ind[j];
+            if (assignments[neighbor] == -1) {
+                std::cerr << "Error: Neighbor variable " << neighbor << " is unassigned." << std::endl;
+                errors++;
+                continue;
+            }
+
+            // if assignments[i] is true and assignments[neighbor] is false, then we have a conflict
+            if ((assignments[i] & 1) && !(assignments[neighbor] & 1)) {
+                std::cerr << "Error: Conflict between variable " << i << " and its neighbor " << neighbor << "." << std::endl;
+                errors++;
+            }
+        }
+    }
+    return errors;
 }
 
 #endif // COMMON_H
