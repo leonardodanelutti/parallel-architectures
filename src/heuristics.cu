@@ -635,3 +635,83 @@ void heuristic5(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
     CUDA_CHECK(cudaFree(d_max_nodes));
     CUDA_CHECK(cudaFree(d_max_counts));
 }
+
+// Count outgoing edges for each node (assigned nodes are set to 0).
+__global__ void countOutgoingEdges(
+    const int* const __restrict__ row_ptr,
+    const int* const __restrict__ col_ind,
+    const int* const __restrict__ assignments,
+    int num_nodes,
+    int* const __restrict__ out_counts
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = tid; i < num_nodes; i += stride) {
+        if (assignments[i] != -1) {
+            out_counts[i] = 0;
+            continue;
+        }
+
+        int count = 0;
+        for (int j = row_ptr[i]; j < row_ptr[i + 1]; ++j) {
+            int neighbor = col_ind[j];
+            if (assignments[neighbor] == -1) {
+                count++;
+            }
+        }
+        out_counts[i] = count;
+    }
+}
+
+// Same as heuristic5 but uses the outgoing edge count instead of reachability.
+void heuristic6(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignments, int* d_wcc_map) {
+    // Get the reverse mapping
+    int* d_sorted_wcc;
+    CUDA_CHECK(cudaMalloc(&d_sorted_wcc, scc_graph.num_nodes * sizeof(int)));
+    CSRRepr wcc_grouped = getWCCGrouped(d_wcc_map, d_sorted_wcc, scc_graph.num_nodes);
+
+    // Allocate memory for the per-node outgoing edge counts
+    int* d_out_counts;
+    CUDA_CHECK(cudaMalloc(&d_out_counts, scc_graph.num_nodes * sizeof(int)));
+
+    // Allocate memory for the max node per WCC and its count
+    int* d_max_nodes;
+    int* d_max_counts;
+    CUDA_CHECK(cudaMalloc(&d_max_nodes, wcc_grouped.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_max_counts, wcc_grouped.num_nodes * sizeof(int)));
+
+    while (true) {
+        // Count outgoing edges for all nodes (assigned nodes get 0)
+        countOutgoingEdges<<<gridStrideBlocks(scc_graph.num_nodes), NumThPerBlock>>>(
+            scc_graph.row_ptr,
+            scc_graph.col_ind,
+            backbone_assignments,
+            scc_graph.num_nodes,
+            d_out_counts
+        );
+
+        // Get node with max outgoing edge count for each WCC
+        getMaxForWCC(d_out_counts, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_counts);
+
+        // Delete all the nodes reachable by the node with max count in each WCC pair
+        int num_wcc_pairs = (wcc_grouped.num_nodes - 1) / 2;
+        bool h_has_change = deleteAndPropagate(
+            scc_graph,
+            backbone_assignments,
+            d_max_nodes,
+            d_max_counts,
+            num_wcc_pairs
+        );
+
+        if (!h_has_change) {
+            break; // No more nodes to remove
+        }
+    }
+
+    // Cleanup
+    CUDA_CHECK(cudaFree(d_sorted_wcc));
+    CUDA_CHECK(cudaFree(d_out_counts));
+    CUDA_CHECK(cudaFree(d_max_nodes));
+    CUDA_CHECK(cudaFree(d_max_counts));
+}

@@ -13,7 +13,7 @@ void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int nu
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <filename> [heuristic]" << std::endl;
-        std::cerr << "  heuristic: 1 | 2 | 3 | 4 | 5 | all (default)" << std::endl;
+        std::cerr << "  heuristic: 1 | 2 | 3 | 4 | 5 | 6 | all (default)" << std::endl;
         return 1;
     }
 
@@ -73,6 +73,9 @@ int main(int argc, char* argv[]) {
             case 5:
                 heuristic5(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
                 break;
+            case 6:
+                heuristic6(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
+                break;
             default:
                 return false;
         }
@@ -90,7 +93,7 @@ int main(int argc, char* argv[]) {
             cudaMemcpyDeviceToDevice
         ));
 
-        for (int which = 1; which <= 5; ++which) {
+        for (int which = 1; which <= 6; ++which) {
             CUDA_CHECK(cudaMemcpy(
                 d_backbone_assignments,
                 d_backbone_assignments_base,
@@ -105,7 +108,7 @@ int main(int argc, char* argv[]) {
         int which = std::atoi(heuristic.c_str());
         if (!run_heuristic(which)) {
             std::cerr << "Unknown heuristic: " << heuristic << std::endl;
-            std::cerr << "Expected: 1 | 2 | 3 | 4 | 5 | all" << std::endl;
+            std::cerr << "Expected: 1 | 2 | 3 | 4 | 5 | 6 | all" << std::endl;
         }
     }
     
