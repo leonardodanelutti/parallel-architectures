@@ -20,7 +20,7 @@
 // Default max number of blocks
 #define MaxBlocks 80 // SMs * (maxThreadsPerSM / ThreadsPerBlock)
 
-int gridStrideBlocks(int number_of_elements, int threads_per_block = NumThPerBlock, int max_blocks = MaxBlocks) {
+inline int gridStrideBlocks(int number_of_elements, int threads_per_block = NumThPerBlock, int max_blocks = MaxBlocks) {
     int blocks = (number_of_elements + NumThPerBlock - 1) / NumThPerBlock;
     return (blocks > MaxBlocks) ? MaxBlocks : blocks;
 }
@@ -61,7 +61,7 @@ struct CSRRepr {
 };
 
 // Utility function to free CSR graph memory in the host
-void freeCSRRepr(CSRRepr& graph) {
+inline void freeCSRRepr(CSRRepr& graph) {
     delete[] graph.row_ptr;
     delete[] graph.col_ind;
 
@@ -71,14 +71,14 @@ void freeCSRRepr(CSRRepr& graph) {
     graph.col_ind = nullptr;
 }
 
-int get_vertex_from_literal(int lit) {
+inline int get_vertex_from_literal(int lit) {
     return (lit > 0) ? 2 * lit - 2 : 2 * (-lit) - 1;
 }
 
 /**
  * Creates a CSR graph from an edge lists.
  */
-CSRRepr createCSRGraph(int num_nodes, int num_edges, const int2* edge_list) {
+inline CSRRepr createCSRGraph(int num_nodes, int num_edges, const int2* edge_list) {
     CSRRepr csr;
     csr.num_nodes = num_nodes;
     csr.num_edges = num_edges;
@@ -135,7 +135,7 @@ CSRRepr createCSRGraph(int num_nodes, int num_edges, const int2* edge_list) {
  * Reads a 2SAT instance from a DIMACS CNF file and constructs its implication graph in CSR format.
  */
 
-void read2SATInstance(const std::string& filename, int& num_vars, int& num_clauses, int& asp_result, CSRRepr& graph) {
+inline void read2SATInstance(const std::string& filename, int& num_vars, int& num_clauses, int& asp_result, CSRRepr& graph) {
     std::ifstream file(filename);
     if (!file) {
         std::cerr << "Error opening file: " << filename << std::endl;
@@ -185,7 +185,7 @@ void read2SATInstance(const std::string& filename, int& num_vars, int& num_claus
     }
 }
 
-int checkAssignment(const CSRRepr& graph, const int* assignments) {
+inline int checkAssignment(const CSRRepr& graph, const int* assignments) {
     int errors = 0;
     for (int i = 0; i < graph.num_nodes; ++i) {
         if (assignments[i] == -1) {

@@ -1,5 +1,6 @@
 #include "../include/common.h"
 #include "../include/cuda_utils.h"
+#include "../include/benchmark.h"
 #include "SCC.cu"
 #include "topo_sort.cu"
 #include "back_bone.cu"
@@ -13,7 +14,7 @@ bool checkSatPairs(int num_vars, int* d_scc_lookup, int& bad_var_idx);
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <filename> [heuristic] [--check-sodd]" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <filename> [heuristic] [--check-sodd] [--bench] [--bench-file <path>]" << std::endl;
         std::cerr << "  heuristic: 1 | 2 | 3 | 4 | 5 | 6 | all (default)" << std::endl;
         return 1;
     }
@@ -21,14 +22,32 @@ int main(int argc, char* argv[]) {
     std::string filename = argv[1];
     std::string heuristic = "all";
     bool check_sodd = false;
+    bool bench_enabled = false;
+    std::string bench_path = "benchmarks.csv";
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--check-sodd") {
             check_sodd = true;
+        } else if (arg == "--bench") {
+            bench_enabled = true;
+        } else if (arg == "--bench-file") {
+            if (i + 1 < argc) {
+                bench_enabled = true;
+                bench_path = argv[++i];
+            } else {
+                std::cerr << "--bench-file requires a path" << std::endl;
+                return 1;
+            }
+        } else if (arg.rfind("--bench-file=", 0) == 0) {
+            bench_enabled = true;
+            bench_path = arg.substr(std::string("--bench-file=").size());
         } else {
             heuristic = arg;
         }
     }
+
+    initBenchmark(g_bench, bench_enabled, bench_path, filename, heuristic);
+    benchStartTotal(g_bench);
     
     // Print GPU information
     printDeviceInfo();
@@ -37,12 +56,15 @@ int main(int argc, char* argv[]) {
     // read 2SAT instance from file
     int num_vars, num_clauses, asp_result;
     CSRRepr graph;
+    benchStart(g_bench, BENCH_HOST);
     read2SATInstance(filename, num_vars, num_clauses, asp_result, graph);
+    benchEnd(g_bench, "read_instance", BENCH_HOST);
 
     // TODO: Start CUDA event timing
 
     // Allocate device memory
     CSRRepr d_graph;
+    benchStart(g_bench, BENCH_DEVICE);
     CUDA_CHECK(cudaMalloc(&d_graph.row_ptr, (graph.num_nodes + 1) * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_graph.col_ind, graph.num_edges * sizeof(int)));
     
@@ -51,32 +73,44 @@ int main(int argc, char* argv[]) {
     CUDA_CHECK(cudaMemcpy(d_graph.col_ind, graph.col_ind, graph.num_edges * sizeof(int), cudaMemcpyHostToDevice));
     d_graph.num_nodes = graph.num_nodes;
     d_graph.num_edges = graph.num_edges;
+    benchEnd(g_bench, "alloc_graph", BENCH_DEVICE);
 
     // Compute the condensed graph of SCCs
+    benchStart(g_bench, BENCH_DEVICE);
     CondensedGraphResult condensed = computeCondensedGraph(d_graph);
     CSRRepr scc_graph = condensed.graph;
+    benchEnd(g_bench, "scc", BENCH_DEVICE);
 
     int exit_code = 0;
     if (check_sodd) {
         int bad_var_idx = -1;
+        benchStart(g_bench, BENCH_HOST);
         if (!checkSatPairs(num_vars, condensed.d_scc_lookup, bad_var_idx)) {
             std::cerr << "SODD check failed: variable " << bad_var_idx
                       << " has literals in the same SCC." << std::endl;
             exit_code = 2;
         }
+        benchEnd(g_bench, "sodd_check", BENCH_HOST);
     }
 
     // Compute topological sort and levels for the condensed graph
+    benchStart(g_bench, BENCH_DEVICE);
     TopoResult topo_result = topologicalSort(scc_graph);
+    benchEnd(g_bench, "topo_sort", BENCH_DEVICE);
 
+    benchStart(g_bench, BENCH_DEVICE);
     int* d_backbone_assignments = computeBackbone(
         scc_graph,
         topo_result
     );
+    benchEnd(g_bench, "backbone", BENCH_DEVICE);
 
+    benchStart(g_bench, BENCH_DEVICE);
     int* d_wcc_map = computeWCC(scc_graph, d_backbone_assignments);
+    benchEnd(g_bench, "wcc", BENCH_DEVICE);
 
     auto run_heuristic = [&](int which) {
+        benchStart(g_bench, BENCH_DEVICE);
         switch (which) {
             case 1:
                 heuristic1(scc_graph, d_backbone_assignments, d_wcc_map);
@@ -99,6 +133,7 @@ int main(int argc, char* argv[]) {
             default:
                 return false;
         }
+        benchEnd(g_bench, "heuristic" + std::to_string(which), BENCH_DEVICE);
         printAssignments(d_backbone_assignments, condensed.d_scc_lookup, scc_graph.num_nodes, d_graph.num_nodes, which);
         return true;
     };
@@ -143,14 +178,19 @@ int main(int argc, char* argv[]) {
     }
     
     // - Free device memory
+    benchStart(g_bench, BENCH_DEVICE);
     freeDeviceCSRRepr(scc_graph);
     freeDeviceCSRRepr(d_graph);
     CUDA_CHECK(cudaFree(condensed.d_scc_lookup));
     CUDA_CHECK(cudaFree(topo_result.d_topo_order));
     CUDA_CHECK(cudaFree(d_backbone_assignments));
     CUDA_CHECK(cudaFree(d_wcc_map));
+    benchEnd(g_bench, "cleanup_device", BENCH_DEVICE);
     // Free host memory
     freeCSRRepr(graph);
+
+    benchStopTotal(g_bench);
+    benchFlush(g_bench);
     
     // std::cout << "CUDA execution completed!" << std::endl;
     

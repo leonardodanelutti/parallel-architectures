@@ -40,8 +40,8 @@ sequential: $(SRC_DIR)/sequential.cpp $(INC_DIR)/common.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -o $@
 
 # CUDA parallel implementation
-parallel: $(SRC_DIR)/parallel.cu $(INC_DIR)/common.h $(INC_DIR)/cuda_utils.h
-	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< -o $@
+parallel: $(SRC_DIR)/parallel.cu $(SRC_DIR)/benchmark.cu $(INC_DIR)/common.h $(INC_DIR)/cuda_utils.h $(INC_DIR)/benchmark.h
+	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $(SRC_DIR)/parallel.cu $(SRC_DIR)/benchmark.cu -o $@
 
 # Benchmarks
 benchmarks: $(SRC_DIR)/benchmarks.cpp $(INC_DIR)/common.h $(INC_DIR)/cuda_utils.h

@@ -67,7 +67,7 @@ inline void printDeviceInfo(int device = 0) {
 }
 
 // Utility function to free CSR graph memory in the device
-void freeDeviceCSRRepr(CSRRepr& graph) {
+inline void freeDeviceCSRRepr(CSRRepr& graph) {
     CUDA_CHECK(cudaFree(graph.row_ptr));
     CUDA_CHECK(cudaFree(graph.col_ind));
 
