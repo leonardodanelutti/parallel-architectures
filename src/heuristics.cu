@@ -653,7 +653,7 @@ __global__ void countOutgoingEdges(
             continue;
         }
 
-        int count = 0;
+        int count = 1;
         for (int j = row_ptr[i]; j < row_ptr[i + 1]; ++j) {
             int neighbor = col_ind[j];
             if (assignments[neighbor] == -1) {
