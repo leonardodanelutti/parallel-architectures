@@ -9,16 +9,26 @@
 std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int num_nodes);
 void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic);
 void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic);
+bool checkSatPairs(int num_vars, int* d_scc_lookup, int& bad_var_idx);
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <filename> [heuristic]" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <filename> [heuristic] [--check-sodd]" << std::endl;
         std::cerr << "  heuristic: 1 | 2 | 3 | 4 | 5 | 6 | all (default)" << std::endl;
         return 1;
     }
 
     std::string filename = argv[1];
-    std::string heuristic = (argc >= 3) ? argv[2] : "all";
+    std::string heuristic = "all";
+    bool check_sodd = false;
+    for (int i = 2; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--check-sodd") {
+            check_sodd = true;
+        } else {
+            heuristic = arg;
+        }
+    }
     
     // Print GPU information
     printDeviceInfo();
@@ -45,6 +55,16 @@ int main(int argc, char* argv[]) {
     // Compute the condensed graph of SCCs
     CondensedGraphResult condensed = computeCondensedGraph(d_graph);
     CSRRepr scc_graph = condensed.graph;
+
+    int exit_code = 0;
+    if (check_sodd) {
+        int bad_var_idx = -1;
+        if (!checkSatPairs(num_vars, condensed.d_scc_lookup, bad_var_idx)) {
+            std::cerr << "SODD check failed: variable " << bad_var_idx
+                      << " has literals in the same SCC." << std::endl;
+            exit_code = 2;
+        }
+    }
 
     // Compute topological sort and levels for the condensed graph
     TopoResult topo_result = topologicalSort(scc_graph);
@@ -83,7 +103,7 @@ int main(int argc, char* argv[]) {
         return true;
     };
 
-    if (heuristic == "all") {
+    if (exit_code == 0 && heuristic == "all") {
         int* d_backbone_assignments_base = nullptr;
         CUDA_CHECK(cudaMalloc(&d_backbone_assignments_base, scc_graph.num_nodes * sizeof(int)));
         CUDA_CHECK(cudaMemcpy(
@@ -114,7 +134,7 @@ int main(int argc, char* argv[]) {
         }
 
         CUDA_CHECK(cudaFree(d_backbone_assignments_base));
-    } else {
+    } else if (exit_code == 0) {
         int which = std::atoi(heuristic.c_str());
         if (!run_heuristic(which)) {
             std::cerr << "Unknown heuristic: " << heuristic << std::endl;
@@ -134,7 +154,23 @@ int main(int argc, char* argv[]) {
     
     // std::cout << "CUDA execution completed!" << std::endl;
     
-    return 0;
+    return exit_code;
+}
+
+bool checkSatPairs(int num_vars, int* d_scc_lookup, int& bad_var_idx) {
+    const int num_lit = num_vars * 2;
+    std::vector<int> h_scc_lookup(num_lit);
+    CUDA_CHECK(cudaMemcpy(h_scc_lookup.data(), d_scc_lookup, num_lit * sizeof(int), cudaMemcpyDeviceToHost));
+
+    for (int i = 0; i < num_vars; ++i) {
+        const int a = h_scc_lookup[2 * i];
+        const int b = h_scc_lookup[2 * i + 1];
+        if (a == b) {
+            bad_var_idx = i;
+            return false;
+        }
+    }
+    return true;
 }
 
 // compute result from the final assignments array
