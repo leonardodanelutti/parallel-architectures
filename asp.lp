@@ -19,11 +19,12 @@ dual(pos(A), neg(A)) :- var(A).
 dual(neg(A), pos(A)) :- var(A).
 
 % 1. Generate the Subset X
-% We choose to fix some vars to a specific truth value.
-{ fixed(A, true); fixed(A, false) } :- var(A).
+% Choose which vars are fixed, then choose a value only for fixed vars.
+{ fix(A) } :- var(A).
+1 { fixed(A, true); fixed(A, false) } 1 :- fix(A).
 
 % Optimization: Find the minimum number of fixed variables.
-#minimize { 1,A : fixed(A,_) }.
+#minimize { 1,A : fix(A) }.
 
 % 2. Unit propagation guarantees to cover all variables.
 
