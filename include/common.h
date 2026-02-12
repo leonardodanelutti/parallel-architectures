@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 /**
  * Common utilities for CUDA educational projects
@@ -135,20 +136,37 @@ inline CSRRepr createCSRGraph(int num_nodes, int num_edges, const int2* edge_lis
  * Reads a 2SAT instance from a DIMACS CNF file and constructs its implication graph in CSR format.
  */
 
-inline void read2SATInstance(const std::string& filename, int& num_vars, int& num_clauses, int& asp_result, CSRRepr& graph) {
+inline void read2SATInstance(
+    const std::string& filename,
+    int& num_vars,
+    int& num_clauses,
+    int& lower_bound,
+    int& upper_bound,
+    bool& bounds_present,
+    CSRRepr& graph
+) {
     std::ifstream file(filename);
     if (!file) {
         std::cerr << "Error opening file: " << filename << std::endl;
         exit(EXIT_FAILURE);
     }
 
+    lower_bound = -1;
+    upper_bound = -1;
+    bounds_present = false;
+
     std::string token;
     while (file >> token) {
         // read fixed variables
         // c fixed-timeout: 154
         if (token == "c") {
-            if (file >> token && (token == "fixed-timeout:" || token == "fixed:")) {
-                file >> asp_result;
+            if (file >> token) {
+                if (token == "bounds") {
+                    file >> lower_bound >> upper_bound;
+                    bounds_present = true;
+                } else {
+                    file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                }
             }
         }
 

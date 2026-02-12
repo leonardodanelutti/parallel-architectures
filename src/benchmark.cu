@@ -9,6 +9,21 @@ void BenchmarkLogger::enable(const std::string& path, const std::string& filenam
     heuristic_ = heuristic;
 }
 
+void BenchmarkLogger::setInstanceInfo(
+    int num_vars,
+    int num_clauses,
+    int lower_bound,
+    int upper_bound,
+    bool bounds_present
+) {
+    if (!enabled_) return;
+    num_vars_ = num_vars;
+    num_clauses_ = num_clauses;
+    lower_bound_ = lower_bound;
+    upper_bound_ = upper_bound;
+    bounds_present_ = bounds_present;
+}
+
 bool BenchmarkLogger::enabled() const { return enabled_; }
 
 void BenchmarkLogger::record(const std::string& phase, double wall_ms, float gpu_ms) {
@@ -42,12 +57,19 @@ void BenchmarkLogger::flush() const {
     }
 
     if (write_header) {
-        out << "filename,heuristic,phase,wall_ms,gpu_ms,used_bytes,free_bytes,total_bytes" << std::endl;
+        out << "filename,heuristic,num_vars,num_clauses,lower_bound,upper_bound,bounds_present,"
+               "phase,wall_ms,gpu_ms,used_bytes,free_bytes,total_bytes"
+            << std::endl;
     }
 
     for (const auto& row : rows_) {
         out << filename_ << ','
             << heuristic_ << ','
+            << num_vars_ << ','
+            << num_clauses_ << ','
+            << lower_bound_ << ','
+            << upper_bound_ << ','
+            << (bounds_present_ ? 1 : 0) << ','
             << row.phase << ','
             << row.wall_ms << ','
             << row.gpu_ms << ','
@@ -129,4 +151,16 @@ void benchStopTotal(BenchmarkState& state) {
 void benchFlush(BenchmarkState& state) {
     if (!state.enabled) return;
     state.logger.flush();
+}
+
+void benchSetInstanceInfo(
+    BenchmarkState& state,
+    int num_vars,
+    int num_clauses,
+    int lower_bound,
+    int upper_bound,
+    bool bounds_present
+) {
+    if (!state.enabled) return;
+    state.logger.setInstanceInfo(num_vars, num_clauses, lower_bound, upper_bound, bounds_present);
 }

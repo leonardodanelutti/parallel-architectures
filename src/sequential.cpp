@@ -15,9 +15,19 @@ int main() {
     std::cout << "=== Sequential Implementation ===" << std::endl;
     
      // read 2SAT instance from file
-    int num_vars, num_clauses, asp_result;
+    int num_vars, num_clauses;
+    int lower_bound, upper_bound;
+    bool bounds_present;
     CSRRepr graph;
-    read2SATInstance("instance_1000v_2500c.cnf", num_vars, num_clauses, asp_result, graph);
+    read2SATInstance(
+        "instance_1000v_2500c.cnf",
+        num_vars,
+        num_clauses,
+        lower_bound,
+        upper_bound,
+        bounds_present,
+        graph
+    );
     
     // TODO: Run and time your algorithm
     Timer timer;

@@ -54,11 +54,22 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
 
     // read 2SAT instance from file
-    int num_vars, num_clauses, asp_result;
+    int num_vars, num_clauses;
+    int lower_bound, upper_bound;
+    bool bounds_present;
     CSRRepr graph;
     benchStart(g_bench, BENCH_HOST);
-    read2SATInstance(filename, num_vars, num_clauses, asp_result, graph);
+    read2SATInstance(
+        filename,
+        num_vars,
+        num_clauses,
+        lower_bound,
+        upper_bound,
+        bounds_present,
+        graph
+    );
     benchEnd(g_bench, "read_instance", BENCH_HOST);
+    benchSetInstanceInfo(g_bench, num_vars, num_clauses, lower_bound, upper_bound, bounds_present);
 
     // TODO: Start CUDA event timing
 

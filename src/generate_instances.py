@@ -38,7 +38,7 @@ def run_clingo(num_vars, clauses, timeout=10):
         unsat = handle.get().unsatisfiable
     lower_bound = ctl.statistics["summary"]["lower"][0]
     upper_bound = ctl.statistics["summary"]["costs"][0]
-    print(ctl.statistics["summary"]["times"]["total"])
+    # print(ctl.statistics["summary"]["times"]["total"])
                 
     return lower_bound, upper_bound, unsat
 

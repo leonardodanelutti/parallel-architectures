@@ -18,6 +18,7 @@ struct BenchmarkRow {
 class BenchmarkLogger {
 public:
     void enable(const std::string& path, const std::string& filename, const std::string& heuristic);
+    void setInstanceInfo(int num_vars, int num_clauses, int lower_bound, int upper_bound, bool bounds_present);
     bool enabled() const;
     void record(const std::string& phase, double wall_ms, float gpu_ms);
     void flush() const;
@@ -27,6 +28,11 @@ private:
     std::string out_path_;
     std::string filename_;
     std::string heuristic_;
+    int num_vars_ = -1;
+    int num_clauses_ = -1;
+    int lower_bound_ = -1;
+    int upper_bound_ = -1;
+    bool bounds_present_ = false;
     std::vector<BenchmarkRow> rows_;
 };
 
@@ -69,6 +75,14 @@ void benchEnd(BenchmarkState& state, const std::string& phase, BenchMode mode);
 void benchStartTotal(BenchmarkState& state);
 void benchStopTotal(BenchmarkState& state);
 void benchFlush(BenchmarkState& state);
+void benchSetInstanceInfo(
+    BenchmarkState& state,
+    int num_vars,
+    int num_clauses,
+    int lower_bound,
+    int upper_bound,
+    bool bounds_present
+);
 
 extern BenchmarkState g_bench;
 
