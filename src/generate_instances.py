@@ -52,7 +52,13 @@ def generate_instance(num_vars, num_clauses, filename, run_solver=True, solver_t
         
         lit1 = var1 if assignment[var1] else -var1
         lit2 = var2 if random.choice([True, False]) else -var2
-        
+
+        # remove self-loops in the implication graph
+        if lit1 == -lit2:
+            lit2 = -lit2
+
+        # TODO: remove duplicate clauses
+
         if random.choice([True, False]):
             lit1, lit2 = lit2, lit1
         

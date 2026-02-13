@@ -32,6 +32,8 @@ dual(neg(A), pos(A)) :- var(A).
 satisfied(pos(A)) :- fixed(A, true).
 satisfied(neg(A)) :- fixed(A, false).
 
+satisfied(A) :- clause(_, A, A).
+
 % Propagation rules:
 % If the dual of L1 is satisfied, then L2 must be satisfied.
 % If the dual of L2 is satisfied, then L1 must be satisfied.

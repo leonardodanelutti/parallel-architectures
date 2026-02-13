@@ -22,7 +22,7 @@ def resolve_executable():
     if not exe.is_file() or not exe.stat().st_mode & 0o111:
         print("Error: ./parallel is not executable.")
         sys.exit(1)
-    return str(exe)
+    return str(exe.resolve())
 
 
 def run_instance(exe, cnf_path, output_path, check_sodd):
@@ -62,4 +62,5 @@ def main():
 
 
 if __name__ == "__main__":
+    # python ./src/run_benchmarks.py ./instances/grid grid_res
     main()

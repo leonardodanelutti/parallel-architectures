@@ -10,6 +10,7 @@ struct BenchmarkRow {
     std::string phase;
     double wall_ms;
     float gpu_ms;
+    int num_assignments;
     size_t used_bytes;
     size_t free_bytes;
     size_t total_bytes;
@@ -20,7 +21,8 @@ public:
     void enable(const std::string& path, const std::string& filename, const std::string& heuristic);
     void setInstanceInfo(int num_vars, int num_clauses, int lower_bound, int upper_bound, bool bounds_present);
     bool enabled() const;
-    void record(const std::string& phase, double wall_ms, float gpu_ms);
+    void record(const std::string& phase, double wall_ms, float gpu_ms, int num_assignments = -1);
+    void setLastAssignments(int num_assignments);
     void flush() const;
 
 private:
@@ -75,6 +77,7 @@ void benchEnd(BenchmarkState& state, const std::string& phase, BenchMode mode);
 void benchStartTotal(BenchmarkState& state);
 void benchStopTotal(BenchmarkState& state);
 void benchFlush(BenchmarkState& state);
+void benchSetLastAssignments(BenchmarkState& state, int num_assignments);
 void benchSetInstanceInfo(
     BenchmarkState& state,
     int num_vars,

@@ -7,10 +7,11 @@
 #include "WCC.cu"
 #include "heuristics.cu"
 
-std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int num_nodes);
+std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit);
+bool checkSatPairs(int num_vars, int* d_scc_lookup, int& bad_var_idx);
 void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic);
 void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic);
-bool checkSatPairs(int num_vars, int* d_scc_lookup, int& bad_var_idx);
+int getNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit);
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -48,10 +49,6 @@ int main(int argc, char* argv[]) {
 
     initBenchmark(g_bench, bench_enabled, bench_path, filename, heuristic);
     benchStartTotal(g_bench);
-    
-    // Print GPU information
-    printDeviceInfo();
-    std::cout << std::endl;
 
     // read 2SAT instance from file
     int num_vars, num_clauses;
@@ -145,7 +142,8 @@ int main(int argc, char* argv[]) {
                 return false;
         }
         benchEnd(g_bench, "heuristic" + std::to_string(which), BENCH_DEVICE);
-        printAssignments(d_backbone_assignments, condensed.d_scc_lookup, scc_graph.num_nodes, d_graph.num_nodes, which);
+        int num_assignments = getNumAssignments(d_backbone_assignments, condensed.d_scc_lookup, scc_graph.num_nodes, graph.num_nodes);
+        benchSetLastAssignments(g_bench, num_assignments);
         return true;
     };
 
@@ -259,7 +257,7 @@ void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_l
     auto var_assignments = compute_assignments(d_assignments, scc_map, num_nodes, num_lit);
     std::cout << "h" << heuristic << ": " << var_assignments.size() << std::endl;
     for (const auto& [var, value] : var_assignments) {
-        std::cout << var << value << std::endl;
+        std::cout << var << " " << value << " ";
     }
     std::cout << std::endl;
 }
@@ -267,4 +265,9 @@ void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_l
 void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic) {
     auto var_assignments = compute_assignments(d_assignments, scc_map, num_nodes, num_lit);
     std::cout << "h" << heuristic << ": " << var_assignments.size() << std::endl;
+}
+
+int getNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit) {
+    auto var_assignments = compute_assignments(d_assignments, scc_map, num_nodes, num_lit);
+    return var_assignments.size();
 }
