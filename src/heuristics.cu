@@ -44,6 +44,8 @@ __global__ void assignSinks(
     }
 }
 
+// Heuristic 1: For each WCC, pick a sink and assign it to false 
+
 // Find sinks and put to them to false
 void heuristic1(CSRRepr scc_graph, int* backbone_assignments, int* d_wcc_map) {
     int numBlocks = gridStrideBlocks(scc_graph.num_nodes);
@@ -140,6 +142,9 @@ __global__ void assignMinSinks(
     }
 }
 
+// Heuristic 2: For each wcc, find the number of sinks. For each pair of WCCs, 
+// assign false to the sink that has less sinks in its WCC
+
 // Find sources and sinks, check witch is less and assign accordingly
 void heuristic2(CSRRepr scc_graph, int* backbone_assignments, int* d_wcc_map) {
     int* d_num_sinks;
@@ -176,103 +181,6 @@ void heuristic2(CSRRepr scc_graph, int* backbone_assignments, int* d_wcc_map) {
 }
 
 
-// Propagate the number of nodes reachable forwards by each node in the DAG
-// by processing the nodes in reverse topological order (children before parents)
-__global__ void propagateReachability(
-    int num_nodes,
-    const int* const __restrict__ row_ptr,
-    const int* const __restrict__ col_ind,
-    const int* const __restrict__ nodes_in_level,      // Array of node IDs in this level
-    int level_size,                 // How many nodes in this level
-    const int* const __restrict__ assignments,
-    unsigned long long* const __restrict__ reach_bits, // The bitset state (N x 1)
-    int batch_start_idx             // The global index where this batch starts
-) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-
-    for (int idx = tid; idx < level_size; idx += stride) {
-        int u = nodes_in_level[idx];
-
-        // Node is already assigned, skip
-        if (assignments[u] != -1) {
-            reach_bits[u] = 0;
-            continue;
-        }
-
-        // I can reach myself
-        unsigned long long my_bits = 0;
-        if (u >= batch_start_idx && u < batch_start_idx + 64) {
-            my_bits = (1ULL << (u - batch_start_idx));
-        }
-
-        // I can reach all the nodes that my children can reach
-        for (int e = row_ptr[u]; e < row_ptr[u+1]; ++e) {
-            int v = col_ind[e];
-            my_bits |= reach_bits[v];
-        }
-
-        reach_bits[u] = my_bits;
-    }
-}
-
-// Count the number the number of nodes reachable in this batch
-__global__ void accumulate_counts(
-    int num_nodes, 
-    const unsigned long long* const __restrict__ reach_bits, 
-    int* const __restrict__ total_reach_counts
-) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-    for (int idx = tid; idx < num_nodes; idx += stride) {
-        // __popcll counts number of set bits in a 64-bit integer
-        total_reach_counts[idx] += __popcll(reach_bits[idx]);
-    }
-}
-
-// Compute the number of nodes reachable by each node
-// TODO: Maybe we can optime this by only computing the number reachability in each WCC
-// Also, we only need the count of the sources
-void countReachability(CSRRepr scc_graph, TopoResult topo_result, int* assignments, int* d_reach_counts) {
-    unsigned long long *d_reach_bits;
-    CUDA_CHECK(cudaMalloc(&d_reach_bits, scc_graph.num_nodes * sizeof(unsigned long long)));
-
-    for (int batch_start = 0; batch_start < scc_graph.num_nodes; batch_start += 64) {
-        // Initialize reachability bits for this batch
-        CUDA_CHECK(cudaMemset(d_reach_bits, 0, scc_graph.num_nodes * sizeof(unsigned long long)));
-
-        // Process levels in reverse topological order (children before parents)
-        for (int level = topo_result.num_levels - 1; level >= 0; level--) {
-            int level_start = topo_result.level_starts[level];
-            int level_end = topo_result.level_starts[level + 1];
-            int level_count = level_end - level_start;
-
-            if (level_count == 0) continue;
-
-            propagateReachability<<<gridStrideBlocks(level_count), NumThPerBlock>>>(
-                scc_graph.num_nodes,
-                scc_graph.row_ptr,
-                scc_graph.col_ind,
-                topo_result.d_topo_order + level_start,
-                level_count,
-                assignments,
-                d_reach_bits,
-                batch_start
-            );
-        }
-
-        // After processing all levels, accumulate reachability counts
-        accumulate_counts<<<gridStrideBlocks(scc_graph.num_nodes), NumThPerBlock>>>(
-            scc_graph.num_nodes,
-            d_reach_bits,
-            d_reach_counts
-        );
-    }
-
-    CUDA_CHECK(cudaFree(d_reach_bits));
-}
-
-
 // Propagate the deletion of a node in both "complement" DAGs, the target node is assigned true
 __global__ void processFrontierDeletion(
     const int* const __restrict__ row_ptr, 
@@ -304,122 +212,19 @@ __global__ void processFrontierDeletion(
     }
 }
 
-// For each WCC pair choose to set sinks or sources
-__global__ void initTargetFrontier1(
-    const int* const __restrict__ max_nodes,
-    const int* const __restrict__ max_counts,
-    int num_pairs,
-    int* const __restrict__ assignments,
-    int* const __restrict__ queue_out,
-    int* const __restrict__ out_count
-) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-
-    for (int p = tid; p < num_pairs; p += stride) {
-        int dag_1 = 1 + (p * 2);
-        int dag_2 = dag_1 + 1;
-        int max_dag = (max_counts[dag_1] >= max_counts[dag_2]) ? dag_1 : dag_2;
-        int target = max_nodes[max_dag];
-
-        if (target == -1 || max_counts[max_dag] <= 0) {
-            continue;
-        }
-
-        // Assign target and its complement, then enqueue target.
-        if (atomicCAS(&assignments[target], -1, 3) == -1) {
-            assignments[target ^ 1] = 2;
-            int out_idx = atomicAdd(out_count, 1);
-            queue_out[out_idx] = target;
-        }
-    }
-}
-
-// For each WCC pair choose to set sinks or sources
-// If prev_dag[p] != 0, choose the max_node in the complement DAG
-__global__ void initTargetFrontier2(
-    const int* const __restrict__ max_nodes,
-    const int* const __restrict__ max_counts,
-    int num_pairs,
-    int* const __restrict__ prev_dag,
-    int* const __restrict__ assignments,
-    int* const __restrict__ queue_out,
-    int* const __restrict__ out_count
-) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-
-    for (int p = tid; p < num_pairs; p += stride) {
-        int dag_1 = 1 + (p * 2);
-        int dag_2 = dag_1 + 1;
-        int target_dag;
-        if (prev_dag[p] == 0) {
-            // Store the chosen DAG for the next iteration
-            target_dag = (max_counts[dag_1] >= max_counts[dag_2]) ? dag_1 : dag_2;
-            prev_dag[p] = target_dag;
-        } else {
-            // Switch to the other DAG for the next iteration
-            target_dag = (prev_dag[p] == dag_1) ? dag_2 : dag_1;
-            prev_dag[p] = target_dag;
-        }
-        int target_node = max_nodes[target_dag];
-
-        if (target_node == -1 || max_counts[target_dag] <= 0) {
-            continue;
-        }
-
-        // Assign target and its complement, then enqueue target.
-        if (atomicCAS(&assignments[target_node], -1, 3) == -1) {
-            assignments[target_node ^ 1] = 2;
-            int out_idx = atomicAdd(out_count, 1);
-            queue_out[out_idx] = target_node;
-        }
-    }
-}
-
-
 // Find witch node in each pair of WCC reaches the most nodes, remove it 
 // and all the nodes reachable by it and their complements accordingly
-bool deleteAndPropagate(
+void deleteAndPropagate(
     CSRRepr scc_graph,
     int* d_assignments,
-    const int* d_max_nodes,
-    const int* d_max_counts,
-    int num_wcc_pairs,
-    int *d_prev_dag = nullptr,
-    int heuristic_id = 3
+    int* d_queue_in,
+    int* d_count_out
 ) {
-    int *d_queue_in, *d_queue_out, *d_count_out;
-    CUDA_CHECK(cudaMalloc(&d_queue_in, scc_graph.num_nodes * sizeof(int)));
+    int *d_queue_out;
     CUDA_CHECK(cudaMalloc(&d_queue_out, scc_graph.num_nodes * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_count_out, sizeof(int)));
-    CUDA_CHECK(cudaMemset(d_count_out, 0, sizeof(int)));
-
-    // Initialize the frontier with the target nodes to delete (assigned to true)
-    if (heuristic_id != 4) {
-        initTargetFrontier1<<<gridStrideBlocks(num_wcc_pairs), NumThPerBlock>>>(
-            d_max_nodes,
-            d_max_counts,
-            num_wcc_pairs,
-            d_assignments,
-            d_queue_in,
-            d_count_out
-        );
-    } else {
-        initTargetFrontier2<<<gridStrideBlocks(num_wcc_pairs), NumThPerBlock>>>(
-            d_max_nodes,
-            d_max_counts,
-            num_wcc_pairs,
-            d_prev_dag,
-            d_assignments,
-            d_queue_in,
-            d_count_out
-        );
-    }
 
     int queue_size = 0;
     CUDA_CHECK(cudaMemcpy(&queue_size, d_count_out, sizeof(int), cudaMemcpyDeviceToHost));
-    bool has_targets = queue_size > 0;
 
     while (queue_size > 0) {
         CUDA_CHECK(cudaMemset(d_count_out, 0, sizeof(int)));
@@ -442,10 +247,7 @@ bool deleteAndPropagate(
     CUDA_CHECK(cudaFree(d_queue_in));
     CUDA_CHECK(cudaFree(d_queue_out));
     CUDA_CHECK(cudaFree(d_count_out));
-
-    return has_targets;
 }
-
 
 // Comparison of two pairs (count, node_id) to get the max count
 struct MaxCountNode {
@@ -509,21 +311,165 @@ void getMaxForWCC(
     CUDA_CHECK(cudaFree(d_wcc_keys_out));
 }
 
+// Propagate the number of nodes reachable forwards by each node in the DAG
+// by processing the nodes in reverse topological order (children before parents)
+__global__ void propagateReachability(
+    int num_nodes,
+    const int* const __restrict__ row_ptr,
+    const int* const __restrict__ col_ind,
+    const int* const __restrict__ nodes_in_level,      // Array of node IDs in this level
+    int level_size,                 // How many nodes in this level
+    const int* const __restrict__ assignments,
+    unsigned long long* const __restrict__ reach_bits, // The bitset state (N x 1)
+    int batch_start_idx             // The global index where this batch starts
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
 
-// Compute the number of nodes reachable forwards or backwards. Find the node that reaches the most nodes, remove it and all the nodes ahead/behind accordingly, and repeat
-void heuristic_3_4(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignments, int* d_wcc_map, int heuristic_id = 3) {
+    for (int idx = tid; idx < level_size; idx += stride) {
+        int u = nodes_in_level[idx];
+
+        // Node is already assigned, skip
+        if (assignments[u] != -1) {
+            reach_bits[u] = 0;
+            continue;
+        }
+
+        // I can reach myself
+        unsigned long long my_bits = 0;
+        if (u >= batch_start_idx && u < batch_start_idx + 64) {
+            my_bits = (1ULL << (u - batch_start_idx));
+        }
+
+        // I can reach all the nodes that my children can reach
+        for (int e = row_ptr[u]; e < row_ptr[u+1]; ++e) {
+            int v = col_ind[e];
+            my_bits |= reach_bits[v];
+        }
+
+        reach_bits[u] = my_bits;
+    }
+}
+
+// Count the number the number of nodes reachable in this batch
+__global__ void accumulateCounts(
+    int num_nodes, 
+    const unsigned long long* const __restrict__ reach_bits, 
+    int* const __restrict__ total_reach_counts
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    for (int idx = tid; idx < num_nodes; idx += stride) {
+        // __popcll counts number of set bits in a 64-bit integer
+        total_reach_counts[idx] += __popcll(reach_bits[idx]);
+    }
+}
+
+// Compute the number of nodes reachable by each node
+// TODO: Maybe we can optime this by only computing the number reachability in each WCC
+// Also, we only need the count of the sources
+void countReachability(CSRRepr scc_graph, TopoResult topo_result, int* assignments, int* d_reach_counts) {
+    unsigned long long *d_reach_bits;
+    CUDA_CHECK(cudaMalloc(&d_reach_bits, scc_graph.num_nodes * sizeof(unsigned long long)));
+
+    for (int batch_start = 0; batch_start < scc_graph.num_nodes; batch_start += 64) {
+        // Initialize reachability bits for this batch
+        CUDA_CHECK(cudaMemset(d_reach_bits, 0, scc_graph.num_nodes * sizeof(unsigned long long)));
+
+        // Process levels in reverse topological order (children before parents)
+        for (int level = topo_result.num_levels - 1; level >= 0; level--) {
+            int level_start = topo_result.level_starts[level];
+            int level_end = topo_result.level_starts[level + 1];
+            int level_count = level_end - level_start;
+
+            if (level_count == 0) continue;
+
+            propagateReachability<<<gridStrideBlocks(level_count), NumThPerBlock>>>(
+                scc_graph.num_nodes,
+                scc_graph.row_ptr,
+                scc_graph.col_ind,
+                topo_result.d_topo_order + level_start,
+                level_count,
+                assignments,
+                d_reach_bits,
+                batch_start
+            );
+        }
+
+        // After processing all levels, accumulate reachability counts
+        accumulateCounts<<<gridStrideBlocks(scc_graph.num_nodes), NumThPerBlock>>>(
+            scc_graph.num_nodes,
+            d_reach_bits,
+            d_reach_counts
+        );
+    }
+
+    CUDA_CHECK(cudaFree(d_reach_bits));
+}
+
+// For each WCC pair choose to set sinks or sources
+__global__ void initTargetFrontier1(
+    const int* const __restrict__ max_nodes,
+    const int* const __restrict__ max_counts,
+    int num_pairs,
+    int* const __restrict__ assignments,
+    int* const __restrict__ queue_out,
+    int* const __restrict__ out_count
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int p = tid; p < num_pairs; p += stride) {
+        int dag_1 = 1 + (p * 2);
+        int dag_2 = dag_1 + 1;
+        int max_dag = (max_counts[dag_1] >= max_counts[dag_2]) ? dag_1 : dag_2;
+        int target = max_nodes[max_dag];
+
+        if (target == -1 || max_counts[max_dag] <= 0) {
+            continue;
+        }
+
+        // Assign target and its complement, then enqueue target.
+        if (atomicCAS(&assignments[target], -1, 3) == -1) {
+            assignments[target ^ 1] = 2;
+            int out_idx = atomicAdd(out_count, 1);
+            queue_out[out_idx] = target;
+        }
+    }
+}
+
+// Get the queue for target nodes to delete according to the heuristic
+bool getTarget3(
+    int* d_assignments,
+    const int* d_max_nodes,
+    const int* d_max_counts,
+    int num_wcc_pairs,
+    int* d_queue_out,
+    int* d_count_out
+) {
+    CUDA_CHECK(cudaMemset(d_count_out, 0, sizeof(int)));
+
+    initTargetFrontier1<<<gridStrideBlocks(num_wcc_pairs), NumThPerBlock>>>(
+        d_max_nodes,
+        d_max_counts,
+        num_wcc_pairs,
+        d_assignments,
+        d_queue_out,
+        d_count_out
+    );
+
+    int queue_size = 0;
+    CUDA_CHECK(cudaMemcpy(&queue_size, d_count_out, sizeof(int), cudaMemcpyDeviceToHost));
+
+    return queue_size > 0;
+}
+
+void heuristic3(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignments, int* d_wcc_map) {
     // Get the reverse mapping
     int* d_sorted_wcc;
     CUDA_CHECK(cudaMalloc(&d_sorted_wcc, scc_graph.num_nodes * sizeof(int)));
     CSRRepr wcc_grouped = getWCCGrouped(d_wcc_map, d_sorted_wcc, scc_graph.num_nodes);
     int num_wcc_pairs = (wcc_grouped.num_nodes - 1) / 2;
-
-    int* d_prev_dag = nullptr;
-    if (heuristic_id == 4) {
-        // We keep track of the previously chosen DAG for each WCC pair to alternate between them
-        CUDA_CHECK(cudaMalloc(&d_prev_dag, num_wcc_pairs * sizeof(int)));
-        CUDA_CHECK(cudaMemset(d_prev_dag, 0, num_wcc_pairs * sizeof(int)));
-    }
 
     // Count reachability for all nodes
     int* d_reach_counts;
@@ -538,24 +484,36 @@ void heuristic_3_4(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assi
     CUDA_CHECK(cudaMalloc(&d_max_nodes, wcc_grouped.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_max_counts, wcc_grouped.num_nodes * sizeof(int)));
 
+    // Alloc memory for the queue of nodes to delete
+    int* d_queue;
+    int* d_queue_count;
+    CUDA_CHECK(cudaMalloc(&d_queue, scc_graph.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_queue_count, sizeof(int)));
+
     while (true) {
         // Get node with max reachability for each WCC
         getMaxForWCC(d_reach_counts, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_counts);
 
-        // Delete all the nodes reachable by the node with max reachability in each WCC pair
-        bool h_has_change = deleteAndPropagate(
-            scc_graph,
+        // Get the node with max reachability in each WCC pair
+        bool h_has_change = getTarget3(
             backbone_assignments,
             d_max_nodes,
             d_max_counts,
             num_wcc_pairs,
-            d_prev_dag,
-            heuristic_id
+            d_queue,
+            d_queue_count
         );
 
         if (!h_has_change) {
             break; // No more nodes to remove
         }
+
+        deleteAndPropagate(
+            scc_graph,
+            backbone_assignments,
+            d_queue,
+            d_queue_count
+        );
         
         // Set d_reach_counts to 0 to all nodes that have backbone_assignments != -1
         thrust::device_ptr<int> d_reach_counts_ptr(d_reach_counts);
@@ -576,17 +534,158 @@ void heuristic_3_4(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assi
     CUDA_CHECK(cudaFree(d_reach_counts));
     CUDA_CHECK(cudaFree(d_max_nodes));
     CUDA_CHECK(cudaFree(d_max_counts));
-    if (d_prev_dag) {
-        CUDA_CHECK(cudaFree(d_prev_dag));
+    CUDA_CHECK(cudaFree(d_queue));
+    CUDA_CHECK(cudaFree(d_queue_count));
+}
+
+// For each WCC pair choose to set sinks or sources
+// If prev_dag[p] != 0, choose the max_node in the complement DAG
+__global__ void initTargetFrontier2(
+    const int* const __restrict__ max_nodes,
+    const int* const __restrict__ max_counts,
+    int num_pairs,
+    int* const __restrict__ prev_dag,
+    int* const __restrict__ assignments,
+    int* const __restrict__ queue_out,
+    int* const __restrict__ out_count
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int p = tid; p < num_pairs; p += stride) {
+        int dag_1 = 1 + (p * 2);
+        int dag_2 = dag_1 + 1;
+        int target_dag;
+        if (prev_dag[p] == 0) {
+            // Store the chosen DAG for the next iteration
+            target_dag = (max_counts[dag_1] >= max_counts[dag_2]) ? dag_1 : dag_2;
+            prev_dag[p] = target_dag;
+        } else {
+            // Switch to the other DAG for the next iteration
+            target_dag = (prev_dag[p] == dag_1) ? dag_2 : dag_1;
+            prev_dag[p] = target_dag;
+        }
+        int target_node = max_nodes[target_dag];
+
+        if (target_node == -1 || max_counts[target_dag] <= 0) {
+            continue;
+        }
+
+        // Assign target and its complement, then enqueue target.
+        if (atomicCAS(&assignments[target_node], -1, 3) == -1) {
+            assignments[target_node ^ 1] = 2;
+            int out_idx = atomicAdd(out_count, 1);
+            queue_out[out_idx] = target_node;
+        }
     }
 }
 
-void heuristic3(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignments, int* d_wcc_map) {
-    heuristic_3_4(scc_graph, topo_result, backbone_assignments, d_wcc_map, 3);
+bool getTarget4(
+    int* d_assignments,
+    const int* d_max_nodes,
+    const int* d_max_counts,
+    int num_wcc_pairs,
+    int* d_prev_dag,
+    int* d_queue_out,
+    int* d_count_out
+) {
+    CUDA_CHECK(cudaMemset(d_count_out, 0, sizeof(int)));
+
+    initTargetFrontier2<<<gridStrideBlocks(num_wcc_pairs), NumThPerBlock>>>(
+        d_max_nodes,
+        d_max_counts,
+        num_wcc_pairs,
+        d_prev_dag,
+        d_assignments,
+        d_queue_out,
+        d_count_out
+    );
+
+    int queue_size = 0;
+    CUDA_CHECK(cudaMemcpy(&queue_size, d_count_out, sizeof(int), cudaMemcpyDeviceToHost));
+
+    return queue_size > 0;
 }
 
 void heuristic4(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignments, int* d_wcc_map) {
-    heuristic_3_4(scc_graph, topo_result, backbone_assignments, d_wcc_map, 4);
+        // Get the reverse mapping
+    int* d_sorted_wcc;
+    CUDA_CHECK(cudaMalloc(&d_sorted_wcc, scc_graph.num_nodes * sizeof(int)));
+    CSRRepr wcc_grouped = getWCCGrouped(d_wcc_map, d_sorted_wcc, scc_graph.num_nodes);
+    int num_wcc_pairs = (wcc_grouped.num_nodes - 1) / 2;
+
+    int* d_prev_dag;
+    // We keep track of the previously chosen DAG for each WCC pair to alternate between them
+    CUDA_CHECK(cudaMalloc(&d_prev_dag, num_wcc_pairs * sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_prev_dag, 0, num_wcc_pairs * sizeof(int)));
+
+    // Count reachability for all nodes
+    int* d_reach_counts;
+    CUDA_CHECK(cudaMalloc(&d_reach_counts, scc_graph.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMemset(d_reach_counts, 0, scc_graph.num_nodes * sizeof(int)));
+
+    countReachability(scc_graph, topo_result, backbone_assignments, d_reach_counts);
+
+    // Allocate memory for the max node per WCC and its count
+    int* d_max_nodes;
+    int* d_max_counts;
+    CUDA_CHECK(cudaMalloc(&d_max_nodes, wcc_grouped.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_max_counts, wcc_grouped.num_nodes * sizeof(int)));
+
+    // Alloc memory for the queue of nodes to delete
+    int* d_queue;
+    int* d_queue_count;
+    CUDA_CHECK(cudaMalloc(&d_queue, scc_graph.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_queue_count, sizeof(int)));
+
+    while (true) {
+        // Get node with max reachability for each WCC
+        getMaxForWCC(d_reach_counts, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_counts);
+
+        // Get the node with max reachability in each WCC pair
+        bool h_has_change = getTarget4(
+            backbone_assignments,
+            d_max_nodes,
+            d_max_counts,
+            num_wcc_pairs,
+            d_prev_dag,
+            d_queue,
+            d_queue_count
+        );
+
+        if (!h_has_change) {
+            break; // No more nodes to remove
+        }
+
+        deleteAndPropagate(
+            scc_graph,
+            backbone_assignments,
+            d_queue,
+            d_queue_count
+        );
+        
+        // Set d_reach_counts to 0 to all nodes that have backbone_assignments != -1
+        thrust::device_ptr<int> d_reach_counts_ptr(d_reach_counts);
+        thrust::device_ptr<int> d_assignments_ptr(backbone_assignments);
+        thrust::transform(
+            d_reach_counts_ptr,
+            d_reach_counts_ptr + scc_graph.num_nodes,
+            d_assignments_ptr,
+            d_reach_counts_ptr,
+            [] __device__ (int count, int assignment) {
+                return assignment != -1 ? 0 : count;
+            }
+        );
+    }
+
+    // Cleanup
+    CUDA_CHECK(cudaFree(d_sorted_wcc));
+    CUDA_CHECK(cudaFree(d_reach_counts));
+    CUDA_CHECK(cudaFree(d_max_nodes));
+    CUDA_CHECK(cudaFree(d_max_counts));
+    CUDA_CHECK(cudaFree(d_prev_dag));
+    CUDA_CHECK(cudaFree(d_queue));
+    CUDA_CHECK(cudaFree(d_queue_count));
 }
 
 // Same as heuristic3 but re-compute the reachability counts after each iteration.
@@ -595,6 +694,7 @@ void heuristic5(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
     int* d_sorted_wcc;
     CUDA_CHECK(cudaMalloc(&d_sorted_wcc, scc_graph.num_nodes * sizeof(int)));
     CSRRepr wcc_grouped = getWCCGrouped(d_wcc_map, d_sorted_wcc, scc_graph.num_nodes);
+    int num_wcc_pairs = (wcc_grouped.num_nodes - 1) / 2;
 
     // Count reachability for all nodes
     int* d_reach_counts;
@@ -606,6 +706,12 @@ void heuristic5(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
     CUDA_CHECK(cudaMalloc(&d_max_nodes, wcc_grouped.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_max_counts, wcc_grouped.num_nodes * sizeof(int)));
 
+    // Alloc memory for the queue of nodes to delete
+    int* d_queue;
+    int* d_queue_count;
+    CUDA_CHECK(cudaMalloc(&d_queue, scc_graph.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_queue_count, sizeof(int)));
+
     while (true) {
         // Count reachability for all nodes
         CUDA_CHECK(cudaMemset(d_reach_counts, 0, scc_graph.num_nodes * sizeof(int)));
@@ -614,19 +720,26 @@ void heuristic5(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
         // Get node with max reachability for each WCC
         getMaxForWCC(d_reach_counts, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_counts);
 
-        // Delete all the nodes reachable by the node with max reachability in each WCC pair
-        int num_wcc_pairs = (wcc_grouped.num_nodes - 1) / 2;
-        bool h_has_change = deleteAndPropagate(
-            scc_graph,
+        // Get the node with max reachability in each WCC pair
+        bool h_has_change = getTarget3(
             backbone_assignments,
             d_max_nodes,
             d_max_counts,
-            num_wcc_pairs
+            num_wcc_pairs,
+            d_queue,
+            d_queue_count
         );
 
         if (!h_has_change) {
             break; // No more nodes to remove
         }
+
+        deleteAndPropagate(
+            scc_graph,
+            backbone_assignments,
+            d_queue,
+            d_queue_count
+        );
     }
 
     // Cleanup
@@ -634,6 +747,8 @@ void heuristic5(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
     CUDA_CHECK(cudaFree(d_reach_counts));
     CUDA_CHECK(cudaFree(d_max_nodes));
     CUDA_CHECK(cudaFree(d_max_counts));
+    CUDA_CHECK(cudaFree(d_queue));
+    CUDA_CHECK(cudaFree(d_queue_count));
 }
 
 // Count outgoing edges for each node (assigned nodes are set to 0).
@@ -670,6 +785,7 @@ void heuristic6(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
     int* d_sorted_wcc;
     CUDA_CHECK(cudaMalloc(&d_sorted_wcc, scc_graph.num_nodes * sizeof(int)));
     CSRRepr wcc_grouped = getWCCGrouped(d_wcc_map, d_sorted_wcc, scc_graph.num_nodes);
+    int num_wcc_pairs = (wcc_grouped.num_nodes - 1) / 2;
 
     // Allocate memory for the per-node outgoing edge counts
     int* d_out_counts;
@@ -680,6 +796,12 @@ void heuristic6(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
     int* d_max_counts;
     CUDA_CHECK(cudaMalloc(&d_max_nodes, wcc_grouped.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_max_counts, wcc_grouped.num_nodes * sizeof(int)));
+
+    // Alloc memory for the queue of nodes to delete
+    int* d_queue;
+    int* d_queue_count;
+    CUDA_CHECK(cudaMalloc(&d_queue, scc_graph.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_queue_count, sizeof(int)));
 
     while (true) {
         // Count outgoing edges for all nodes (assigned nodes get 0)
@@ -694,19 +816,26 @@ void heuristic6(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
         // Get node with max outgoing edge count for each WCC
         getMaxForWCC(d_out_counts, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_counts);
 
-        // Delete all the nodes reachable by the node with max count in each WCC pair
-        int num_wcc_pairs = (wcc_grouped.num_nodes - 1) / 2;
-        bool h_has_change = deleteAndPropagate(
-            scc_graph,
+        // Get the node with max outgoing edge count in each WCC pair
+        bool h_has_change = getTarget3(
             backbone_assignments,
             d_max_nodes,
             d_max_counts,
-            num_wcc_pairs
+            num_wcc_pairs,
+            d_queue,
+            d_queue_count
         );
 
         if (!h_has_change) {
             break; // No more nodes to remove
         }
+
+        deleteAndPropagate(
+            scc_graph,
+            backbone_assignments,
+            d_queue,
+            d_queue_count
+        );
     }
 
     // Cleanup
@@ -714,4 +843,6 @@ void heuristic6(CSRRepr scc_graph, TopoResult topo_result, int* backbone_assignm
     CUDA_CHECK(cudaFree(d_out_counts));
     CUDA_CHECK(cudaFree(d_max_nodes));
     CUDA_CHECK(cudaFree(d_max_counts));
+    CUDA_CHECK(cudaFree(d_queue));
+    CUDA_CHECK(cudaFree(d_queue_count));
 }
