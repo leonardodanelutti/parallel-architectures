@@ -24,6 +24,13 @@ void BenchmarkLogger::setInstanceInfo(
     bounds_present_ = bounds_present;
 }
 
+void BenchmarkLogger::setGraphStats(int num_scc, int num_wcc, int num_levels) {
+    if (!enabled_) return;
+    num_scc_ = num_scc;
+    num_wcc_ = num_wcc;
+    num_levels_ = num_levels;
+}
+
 bool BenchmarkLogger::enabled() const { return enabled_; }
 
 void BenchmarkLogger::record(const std::string& phase, double wall_ms, float gpu_ms, int num_assignments) {
@@ -64,7 +71,7 @@ void BenchmarkLogger::flush() const {
 
     if (write_header) {
         out << "filename,heuristic,num_vars,num_clauses,lower_bound,upper_bound,bounds_present,"
-               "phase,wall_ms,gpu_ms,used_bytes,free_bytes,total_bytes,num_assignments"
+               "num_scc,num_wcc,num_levels,phase,wall_ms,gpu_ms,used_bytes,free_bytes,total_bytes,num_assignments"
             << std::endl;
     }
 
@@ -76,6 +83,9 @@ void BenchmarkLogger::flush() const {
             << lower_bound_ << ','
             << upper_bound_ << ','
             << (bounds_present_ ? 1 : 0) << ','
+            << num_scc_ << ','
+            << num_wcc_ << ','
+            << num_levels_ << ','
             << row.phase << ','
             << row.wall_ms << ','
             << row.gpu_ms << ','
@@ -175,4 +185,9 @@ void benchSetInstanceInfo(
 ) {
     if (!state.enabled) return;
     state.logger.setInstanceInfo(num_vars, num_clauses, lower_bound, upper_bound, bounds_present);
+}
+
+void benchSetGraphStats(BenchmarkState& state, int num_scc, int num_wcc, int num_levels) {
+    if (!state.enabled) return;
+    state.logger.setGraphStats(num_scc, num_wcc, num_levels);
 }

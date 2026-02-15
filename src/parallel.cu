@@ -9,14 +9,14 @@
 
 std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit);
 bool checkSatPairs(int num_vars, int* d_scc_lookup, int& bad_var_idx);
-void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic);
-void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic);
+void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, HeuristicKind heuristic);
+void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, HeuristicKind heuristic);
 int getNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit);
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <filename> [heuristic] [--check-sodd] [--bench] [--bench-file <path>]" << std::endl;
-        std::cerr << "  heuristic: 1 | 2 | 3 | 4 | 5 | 6 | all (default)" << std::endl;
+        std::cerr << "  heuristic: 1 | 2 | 3 | 4 | 5 | all (default)" << std::endl;
         return 1;
     }
 
@@ -117,31 +117,20 @@ int main(int argc, char* argv[]) {
     int* d_wcc_map = computeWCC(scc_graph, d_backbone_assignments);
     benchEnd(g_bench, "wcc", BENCH_DEVICE);
 
-    auto run_heuristic = [&](int which) {
-        benchStart(g_bench, BENCH_DEVICE);
-        switch (which) {
-            case 1:
-                heuristic1(scc_graph, d_backbone_assignments, d_wcc_map);
-                break;
-            case 2:
-                heuristic2(scc_graph, d_backbone_assignments, d_wcc_map);
-                break;
-            case 3:
-                heuristic3(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
-                break;
-            case 4:
-                heuristic4(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
-                break;
-            case 5:
-                heuristic5(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
-                break;
-            case 6:
-                heuristic6(scc_graph, topo_result, d_backbone_assignments, d_wcc_map);
-                break;
-            default:
-                return false;
+    int* d_sorted_wcc = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_sorted_wcc, scc_graph.num_nodes * sizeof(int)));
+    benchStart(g_bench, BENCH_DEVICE);
+    CSRRepr wcc_grouped = getWCCGrouped(d_wcc_map, d_sorted_wcc, scc_graph.num_nodes);
+    benchEnd(g_bench, "wcc_grouped", BENCH_DEVICE);
+    benchSetGraphStats(g_bench, scc_graph.num_nodes, wcc_grouped.num_nodes, topo_result.num_levels);
+
+    auto run_heuristic = [&](HeuristicKind which) {
+        if (which < HEUR_1 || which > HEUR_5) {
+            return false;
         }
-        benchEnd(g_bench, "heuristic" + std::to_string(which), BENCH_DEVICE);
+        benchStart(g_bench, BENCH_DEVICE);
+        solve(scc_graph, topo_result, d_backbone_assignments, wcc_grouped, d_sorted_wcc, which);
+        benchEnd(g_bench, "heuristic" + std::to_string(static_cast<int>(which)), BENCH_DEVICE);
         int num_assignments = getNumAssignments(d_backbone_assignments, condensed.d_scc_lookup, scc_graph.num_nodes, graph.num_nodes);
         benchSetLastAssignments(g_bench, num_assignments);
         return true;
@@ -157,14 +146,14 @@ int main(int argc, char* argv[]) {
             cudaMemcpyDeviceToDevice
         ));
 
-        for (int which = 1; which <= 6; ++which) {
+        for (int which = HEUR_1; which <= HEUR_5; ++which) {
             CUDA_CHECK(cudaMemcpy(
                 d_backbone_assignments,
                 d_backbone_assignments_base,
                 scc_graph.num_nodes * sizeof(int),
                 cudaMemcpyDeviceToDevice
             ));
-            run_heuristic(which);
+            run_heuristic(static_cast<HeuristicKind>(which));
 
             // Check if assignments are correct
             /*
@@ -179,10 +168,11 @@ int main(int argc, char* argv[]) {
 
         CUDA_CHECK(cudaFree(d_backbone_assignments_base));
     } else if (exit_code == 0) {
-        int which = std::atoi(heuristic.c_str());
+        int which_value = std::atoi(heuristic.c_str());
+        HeuristicKind which = static_cast<HeuristicKind>(which_value);
         if (!run_heuristic(which)) {
             std::cerr << "Unknown heuristic: " << heuristic << std::endl;
-            std::cerr << "Expected: 1 | 2 | 3 | 4 | 5 | 6 | all" << std::endl;
+            std::cerr << "Expected: 1 | 2 | 3 | 4 | 5 | all" << std::endl;
         }
     }
     
@@ -192,6 +182,8 @@ int main(int argc, char* argv[]) {
     freeDeviceCSRRepr(d_graph);
     CUDA_CHECK(cudaFree(condensed.d_scc_lookup));
     CUDA_CHECK(cudaFree(topo_result.d_topo_order));
+    freeDeviceCSRRepr(wcc_grouped);
+    CUDA_CHECK(cudaFree(d_sorted_wcc));
     CUDA_CHECK(cudaFree(d_backbone_assignments));
     CUDA_CHECK(cudaFree(d_wcc_map));
     benchEnd(g_bench, "cleanup_device", BENCH_DEVICE);
@@ -253,18 +245,18 @@ std::vector<std::pair<int, int>> compute_assignments(int* d_assignments, int* sc
     return var_assignments;
 }
 
-void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic) {
+void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, HeuristicKind heuristic) {
     auto var_assignments = compute_assignments(d_assignments, scc_map, num_nodes, num_lit);
-    std::cout << "h" << heuristic << ": " << var_assignments.size() << std::endl;
+    std::cout << "h" << static_cast<int>(heuristic) << ": " << var_assignments.size() << std::endl;
     for (const auto& [var, value] : var_assignments) {
         std::cout << var << " " << value << " ";
     }
     std::cout << std::endl;
 }
 
-void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, int heuristic) {
+void printNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit, HeuristicKind heuristic) {
     auto var_assignments = compute_assignments(d_assignments, scc_map, num_nodes, num_lit);
-    std::cout << "h" << heuristic << ": " << var_assignments.size() << std::endl;
+    std::cout << "h" << static_cast<int>(heuristic) << ": " << var_assignments.size() << std::endl;
 }
 
 int getNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_lit) {
