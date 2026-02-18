@@ -191,6 +191,11 @@ inline void read2SATInstance(
                 int from2 = get_vertex_from_literal(-lit2);
                 int to2   = get_vertex_from_literal(lit1);
 
+                if (from1 == to1 || from2 == to2) {
+                    // Skip self-loops
+                    continue; 
+                }
+
                 edges.emplace_back(int2{from1, to1});
                 edges.emplace_back(int2{from2, to2});
             }
