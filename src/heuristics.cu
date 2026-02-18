@@ -59,6 +59,7 @@ void deleteAndPropagate(
 ) {
     int *d_queue_out;
     CUDA_CHECK(cudaMalloc(&d_queue_out, scc_graph.num_nodes * sizeof(int)));
+    int *d_queue_out_alloc = d_queue_out;
 
     int queue_size = 0;
     CUDA_CHECK(cudaMemcpy(&queue_size, d_count_out, sizeof(int), cudaMemcpyDeviceToHost));
@@ -81,9 +82,7 @@ void deleteAndPropagate(
         std::swap(d_queue_in, d_queue_out);
     }
 
-    CUDA_CHECK(cudaFree(d_queue_in));
-    CUDA_CHECK(cudaFree(d_queue_out));
-    CUDA_CHECK(cudaFree(d_count_out));
+    CUDA_CHECK(cudaFree(d_queue_out_alloc));
 }
 
 // Comparison of two pairs (count, node_id) to get the max count
@@ -153,7 +152,7 @@ void getMaxForWCC(
 // 2) The complement of a literal is in the same WCC, then we just set the same WCC id
 // 3) The complement of a literal is in a different WCC, then we set the WCC id of the complement literal
 //    and we set -1 to the WCC of the complement literal
-__device__ int getWCCComplementKernel(
+__host__ __device__ inline int getWCCComplementKernel(
     int wcc_num,
     const int* const __restrict__ wcc_ids_sorted,
     const int num_wccs
@@ -164,10 +163,10 @@ __device__ int getWCCComplementKernel(
         bool is_diff_wcc = (wcc_num < num_wccs - 1) && (wcc_ids_sorted[wcc_num + 1] == wcc_id+1);
         if (is_diff_wcc) {
             // Complement is in a different WCC
-            return wcc_id + 1;
+            return wcc_num + 1;
         } else {
             // Complement is in the same WCC
-            return wcc_id;
+            return wcc_num;
         }
     }
     return -1; // For backbone and odd WCCs
@@ -556,6 +555,18 @@ void solve(
     CUDA_CHECK(cudaMalloc(&d_queue, scc_graph.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_queue_count, sizeof(int)));
 
+    // Get the sorted unique WCC ids
+    int* d_unique_wcc_ids;
+    CUDA_CHECK(cudaMalloc(&d_unique_wcc_ids, wcc_grouped.num_nodes * sizeof(int)));
+    thrust::device_ptr<const int> d_sorted_wcc_ptr(d_sorted_wcc);
+    thrust::device_ptr<int> d_unique_wcc_ids_ptr(d_unique_wcc_ids);
+    thrust::unique_copy(
+        thrust::device,
+        d_sorted_wcc_ptr,
+        d_sorted_wcc_ptr + wcc_grouped.num_edges,
+        d_unique_wcc_ids_ptr
+    );
+
     while (true) {
         // Get node with max property for each WCC
         getMaxForWCC(d_property_vals, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_property);
@@ -566,7 +577,7 @@ void solve(
         nodeToEliminate<<<gridStrideBlocks(wcc_grouped.num_nodes), NumThPerBlock>>>(
             d_max_nodes,
             d_max_property,
-            d_sorted_wcc,
+            d_unique_wcc_ids,
             wcc_grouped.num_nodes,
             d_force_wcc,
             d_assignments,
