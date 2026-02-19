@@ -1,13 +1,12 @@
 # Parallel Architectures - CUDA Project
 
-This repository contains the final project for the Parallel Architectures course, focusing on CUDA programming. The goal is to implement and optimize parallel algorithms for solving a problem using CUDA, comparing their performance against sequential implementations.
+This repository contains the final project for the Parallel Architectures course, focusing on CUDA programming. The goal is to implement and optimize parallel algorithms for solving a problem using CUDA.
 
 ## Project Overview
 
 The project is divided into three main parts:
-1. **Sequential Implementation**: A baseline C++ implementation of the chosen problem.
 2. **CUDA Implementation**: A parallel version of the algorithm using CUDA to leverage GPU acceleration.
-3. **Benchmarking**: A benchmarking suite to compare the performance of the sequential and CUDA implementations.
+2. **Benchmarking**: A benchmarking suite to compare the performance of CUDA implementations.
 
 ## The Problem
 
@@ -37,43 +36,18 @@ A possible solution is to select the variable set X = {x1, x2} and assign truth 
 - **NVIDIA GPU** with compute capability 3.0 or higher
 
 ### Quick Start
-
-1. **Clone this repository**
-   ```bash
-   git clone <repository-url>
-   cd parallel-architectures
-   ```
-
-2. **Build all targets**
-   ```bash
+```bash
    make
-   ```
-
-3. **Run the executables**
-   ```bash
-   ./sequential   # CPU baseline
-   ./parallel     # CUDA implementation
-   ./benchmarks   # Benchmark suite
-   ```
-
-4. **Optional convenience commands**
-   ```bash
-   make run-sequential
-   make run-parallel
-   make run-benchmarks
-   make run-all
-   ```
+   ./parallel
+```
 
 ## Build System
 
 ### Makefile Targets
 
 ```bash
-make            # Build all targets (sequential, parallel, benchmarks)
-make sequential # Build sequential implementation
 make parallel   # Build CUDA implementation
-make benchmarks # Build benchmark suite
-make run-all    # Run sequential, parallel, and benchmarks
+make run-all    # Run parallel and benchmarks
 make clean      # Remove build artifacts
 make help       # Show detailed help
 ```

@@ -12,8 +12,7 @@ typedef enum {
     HEUR_1 = 1,
     HEUR_2 = 2,
     HEUR_3 = 3,
-    HEUR_4 = 4,
-    HEUR_5 = 5
+    HEUR_4 = 4
 } HeuristicKind;
 
 
@@ -177,7 +176,6 @@ __global__ void nodeToEliminate(
     const int* const __restrict__ max_property,
     const int* const __restrict__ wcc_sorted,
     int num_wcc,
-    int* const __restrict__ force_wcc,
     int* const __restrict__ assignments,
     int* const __restrict__ queue_out,
     int* const __restrict__ out_count
@@ -192,18 +190,7 @@ __global__ void nodeToEliminate(
             continue; // No complement WCC, skip
         }
 
-        int max_dag;
-        if (force_wcc) {
-            // If we have a forced WCC from the previous iteration, we must choose the other one
-            if (force_wcc[p] != -1) {
-                max_dag = (force_wcc[p] == 0) ? dag_2 : dag_1;
-            } else {
-                max_dag = (max_property[dag_1] >= max_property[dag_2]) ? dag_1 : dag_2;
-                force_wcc[p] = (max_dag == dag_1) ? 0 : 1; // Store the chosen WCC for the next iteration
-            }
-        } else {
-            max_dag = (max_property[dag_1] >= max_property[dag_2]) ? dag_1 : dag_2;
-        }
+        int max_dag = (max_property[dag_1] >= max_property[dag_2]) ? dag_1 : dag_2;
         int target = nodes[max_dag];
 
         // Assign target and its complement, then enqueue target.
@@ -374,30 +361,6 @@ void countReachability(CSRRepr scc_graph, TopoResult topo_result, int* assignmen
     CUDA_CHECK(cudaFree(d_reach_bits));
 }
 
-typedef struct {
-    int num_wccs;
-    int* d_force_wcc;
-} MemoryHeur4;
-
-typedef struct {
-    HeuristicKind kind;
-    union {
-        MemoryHeur4 heur4;
-    } m;
-} AdditionalMemory;
-
-void freeAdditionalMemory(AdditionalMemory additional_memory) {
-    switch (additional_memory.kind) {
-        case HEUR_4:
-            if (additional_memory.m.heur4.d_force_wcc) {
-                CUDA_CHECK(cudaFree(additional_memory.m.heur4.d_force_wcc));
-            }
-            break;
-        default:
-            break;
-    }
-}
-
 
 void initProperty(
     CSRRepr scc_graph,
@@ -405,7 +368,6 @@ void initProperty(
     int* d_assignments,
     int* d_property_vals,      // out
     int num_wccs,
-    AdditionalMemory& additional_memory,
     HeuristicKind heuristic
 ) {
     switch (heuristic) {
@@ -429,18 +391,8 @@ void initProperty(
                 d_property_vals
             );
             break;
-        case HEUR_4:
-            // Allocate memory for the forced WCC choice in heuristics 4
-            int* d_force_wcc;
-            CUDA_CHECK(cudaMalloc(&d_force_wcc, num_wccs * sizeof(int)));
-            CUDA_CHECK(cudaMemset(d_force_wcc, -1, num_wccs * sizeof(int)));
-            additional_memory.m.heur4.d_force_wcc = d_force_wcc;
-            additional_memory.m.heur4.num_wccs = num_wccs;
-
-            countReachability(scc_graph, topo_result, d_assignments, d_property_vals);
-            break;
         case HEUR_3:
-        case HEUR_5:
+        case HEUR_4:
             countReachability(scc_graph, topo_result, d_assignments, d_property_vals);
             break;
     }
@@ -470,7 +422,6 @@ void updateProperty(
     TopoResult topo_result,
     int* d_assignments,
     int* d_property_vals,
-    AdditionalMemory& additional_memory,
     HeuristicKind heuristic
 ) {
     switch (heuristic) {
@@ -500,24 +451,6 @@ void updateProperty(
             break;
         }
         case HEUR_4:
-        {
-            mask_values(d_property_vals, d_assignments, scc_graph.num_nodes);
-
-            // Swap 0s and 1s in the forced WCC choice for the next iteration
-            int* d_force_wcc = additional_memory.m.heur4.d_force_wcc;
-            thrust::device_ptr<int> d_force_wcc_ptr(d_force_wcc);
-            thrust::transform(
-                d_force_wcc_ptr,
-                d_force_wcc_ptr + additional_memory.m.heur4.num_wccs,
-                d_force_wcc_ptr,
-                [] __device__ (int choice) {
-                    if (choice == -1) return -1; // No forced choice for this WCC
-                    return 1 - choice; // Swap 0 and 1
-                }
-            );
-            break;
-        }
-        case HEUR_5:
             // Count reachability for all nodes
             CUDA_CHECK(cudaMemset(d_property_vals, 0, scc_graph.num_nodes * sizeof(int)));
             countReachability(scc_graph, topo_result, d_assignments, d_property_vals);
@@ -538,10 +471,8 @@ void solve(
     CUDA_CHECK(cudaMalloc(&d_property_vals, scc_graph.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMemset(d_property_vals, 0, scc_graph.num_nodes * sizeof(int)));
 
-    // Allocate any additional memory needed for heuristics
-    AdditionalMemory additional_memory{};
-    additional_memory.kind = heuristic;
-    initProperty(scc_graph, topo_result, d_assignments, d_property_vals, wcc_grouped.num_nodes, additional_memory, heuristic);
+    // Initialize the property values based on the heuristic
+    initProperty(scc_graph, topo_result, d_assignments, d_property_vals, wcc_grouped.num_nodes, heuristic);
 
     // Allocate memory for the max node per WCC and its count
     int* d_max_nodes;
@@ -573,13 +504,11 @@ void solve(
 
         // Get the nodes to eliminate and put them in the queue
         CUDA_CHECK(cudaMemset(d_queue_count, 0, sizeof(int)));
-        int *d_force_wcc = (heuristic == HEUR_4) ? additional_memory.m.heur4.d_force_wcc : nullptr;
         nodeToEliminate<<<gridStrideBlocks(wcc_grouped.num_nodes), NumThPerBlock>>>(
             d_max_nodes,
             d_max_property,
             d_unique_wcc_ids,
             wcc_grouped.num_nodes,
-            d_force_wcc,
             d_assignments,
             d_queue,
             d_queue_count
@@ -605,7 +534,6 @@ void solve(
             topo_result,
             d_assignments,
             d_property_vals,
-            additional_memory,
             heuristic
         );
     }
@@ -614,7 +542,6 @@ void solve(
     CUDA_CHECK(cudaFree(d_property_vals));
     CUDA_CHECK(cudaFree(d_max_nodes));
     CUDA_CHECK(cudaFree(d_max_property));
-    freeAdditionalMemory(additional_memory);
     CUDA_CHECK(cudaFree(d_queue));
     CUDA_CHECK(cudaFree(d_queue_count));
 }

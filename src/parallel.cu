@@ -16,7 +16,7 @@ int getNumAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_l
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <filename> [heuristic] [--check-sodd] [--bench] [--bench-file <path>]" << std::endl;
-        std::cerr << "  heuristic: 1 | 2 | 3 | 4 | 5 | all (default)" << std::endl;
+        std::cerr << "  heuristic: 1 | 2 | 3 | 4 | all (default)" << std::endl;
         return 1;
     }
 
@@ -125,7 +125,7 @@ int main(int argc, char* argv[]) {
     benchSetGraphStats(g_bench, scc_graph.num_nodes, wcc_grouped.num_nodes, topo_result.num_levels);
 
     auto run_heuristic = [&](HeuristicKind which) {
-        if (which < HEUR_1 || which > HEUR_5) {
+        if (which < HEUR_1 || which > HEUR_4) {
             return false;
         }
         benchStart(g_bench, BENCH_DEVICE);
@@ -146,7 +146,7 @@ int main(int argc, char* argv[]) {
             cudaMemcpyDeviceToDevice
         ));
 
-        for (int which = HEUR_1; which <= HEUR_5; ++which) {
+        for (int which = HEUR_1; which <= HEUR_4; ++which) {
             CUDA_CHECK(cudaMemcpy(
                 d_backbone_assignments,
                 d_backbone_assignments_base,
@@ -172,7 +172,7 @@ int main(int argc, char* argv[]) {
         HeuristicKind which = static_cast<HeuristicKind>(which_value);
         if (!run_heuristic(which)) {
             std::cerr << "Unknown heuristic: " << heuristic << std::endl;
-            std::cerr << "Expected: 1 | 2 | 3 | 4 | 5 | all" << std::endl;
+            std::cerr << "Expected: 1 | 2 | 3 | 4 | all" << std::endl;
         }
     }
     

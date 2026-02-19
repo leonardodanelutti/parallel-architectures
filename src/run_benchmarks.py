@@ -2,6 +2,7 @@ import argparse
 import subprocess
 from pathlib import Path
 import sys
+from tqdm import tqdm
 
 
 def parse_args():
@@ -57,10 +58,10 @@ def main():
         sys.exit(1)
 
     output_path = Path(args.output)
-    for cnf_path in cnf_files:
+    for cnf_path in tqdm(cnf_files, desc="Benchmarking", unit="file"):
         run_instance(exe, cnf_path, output_path, args.check_sodd)
 
 
 if __name__ == "__main__":
-    # python ./src/run_benchmarks.py ./instances/grid grid_res
+    # python ./src/run_benchmarks.py ./instances/grid grid_res.csv
     main()

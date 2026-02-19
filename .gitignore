@@ -11,9 +11,7 @@ build/
 *.o
 
 # Template executables
-sequential_template
 cuda_template
-benchmark_template
 
 # Your executables (add specific names as needed)
 # my_program

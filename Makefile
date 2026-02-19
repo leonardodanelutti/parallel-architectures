@@ -18,7 +18,7 @@ BUILD_DIR = build
 INCLUDES = -I$(INC_DIR)
 
 # Targets
-TARGETS = sequential parallel benchmarks
+TARGETS = parallel
 
 # Default target
 all: $(TARGETS)
@@ -26,45 +26,29 @@ all: $(TARGETS)
 	@echo "Build complete!"
 	@echo "======================================"
 	@echo "Available executables:"
-	@echo "  ./sequential  - Sequential CPU implementation"
 	@echo "  ./parallel    - CUDA GPU implementation"
-	@echo "  ./benchmarks  - Performance benchmarks"
 	@echo "======================================"
 
 # Create build directory
 directories:
 	@mkdir -p $(BUILD_DIR)
 
-# Sequential implementation
-sequential: $(SRC_DIR)/sequential.cpp $(INC_DIR)/common.h
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -o $@
 
 # CUDA parallel implementation
 parallel: $(SRC_DIR)/parallel.cu $(SRC_DIR)/benchmark.cu $(INC_DIR)/common.h $(INC_DIR)/cuda_utils.h $(INC_DIR)/benchmark.h
 	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $(SRC_DIR)/parallel.cu $(SRC_DIR)/benchmark.cu -o $@
 
-# Benchmarks
-benchmarks: $(SRC_DIR)/benchmarks.cpp $(INC_DIR)/common.h $(INC_DIR)/cuda_utils.h
-	$(NVCC) $(NVCCFLAGS) $(INCLUDES) $< -o $@
-
-# Build all targets
 build: directories $(TARGETS)
 
 # Run targets
-run-sequential: sequential
-	@echo "Running sequential implementation..."
-	@./sequential
 
 run-parallel: parallel
 	@echo "Running parallel implementation..."
 	@./parallel
 
-run-benchmarks: benchmarks
-	@echo "Running benchmarks..."
-	@./benchmarks
-
 # Run all
-run-all: run-sequential run-parallel run-benchmarks
+run-all: run-parallel
 
 # Clean build artifacts
 clean:
@@ -74,19 +58,14 @@ clean:
 	@echo "Cleaned build artifacts"
 
 # Help target
-help:
 	@echo "======================================"
 	@echo "Parallel Architectures Project"
 	@echo "======================================"
 	@echo "Available targets:"
 	@echo "  make               - Build all targets"
-	@echo "  make sequential    - Build sequential implementation"
 	@echo "  make parallel      - Build CUDA parallel implementation"
-	@echo "  make benchmarks    - Build benchmark suite"
 	@echo "  make build         - Build all targets"
-	@echo "  make run-sequential - Run sequential version"
 	@echo "  make run-parallel   - Run parallel version"
-	@echo "  make run-benchmarks - Run benchmarks"
 	@echo "  make run-all        - Run all implementations"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make help          - Show this help"
@@ -94,8 +73,10 @@ help:
 	@echo "CUDA Educational Project - Makefile"
 	@echo "======================================"
 	@echo ""
+	@echo "Benchmarking is now run via Python:"
+	@echo "  python src/run_benchmarks.py <folder> <output.csv>"
+	@echo ""
 	@echo "This Makefile provides a template for building CUDA projects"
-	@echo "with both sequential and parallel implementations."
 	@echo ""
 	@echo "Getting Started:"
 	@echo "  1. Copy template files to create your implementation"
@@ -113,9 +94,7 @@ help:
 	@echo "  help             - Show this help message"
 	@echo ""
 	@echo "Template files:"
-	@echo "  src/sequential_template.cpp  - CPU implementation template"
 	@echo "  src/cuda_template.cu         - GPU kernel template"
-	@echo "  src/benchmark_template.cpp   - Benchmarking template"
 	@echo ""
 	@echo "Include files:"
 	@echo "  include/common.h       - Common utilities (Timer, etc.)"
@@ -128,4 +107,4 @@ help:
 	@echo ""
 	@echo "======================================"
 
-.PHONY: all directories templates build run-sequential run-cuda run-benchmark test-templates clean help
+.PHONY: all directories templates build run-cuda test-templates clean help
