@@ -1,4 +1,5 @@
 import argparse
+SEED = 42  # Set to None for non-deterministic behavior
 from pathlib import Path
 import random
 import clingo
@@ -79,6 +80,8 @@ def generate_instance(num_vars, num_clauses, filename, run_solver=True, solver_t
 
 
 def main():
+    if SEED is not None:
+        random.seed(SEED)
     parser = argparse.ArgumentParser()
     parser.add_argument('num_vars_start', type=int, nargs='?', default=10)
     parser.add_argument('num_vars_end', type=int, nargs='?', default=10)
@@ -100,7 +103,7 @@ def main():
         for v in range(args.vars_num):
             num_vars = args.num_vars_start if args.vars_num == 1 else \
                        args.num_vars_start + v * (args.num_vars_end - args.num_vars_start) // (args.vars_num - 1)
-            
+
             for r in range(args.ratios_num):
                 ratio = args.ratio_start if args.ratios_num == 1 else \
                         args.ratio_start + r * (args.ratio_end - args.ratio_start) / (args.ratios_num - 1)
