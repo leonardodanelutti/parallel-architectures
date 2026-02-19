@@ -54,12 +54,9 @@ void deleteAndPropagate(
     CSRRepr scc_graph,
     int* d_assignments,
     int* d_queue_in,
-    int* d_count_out
+    int* d_count_out,
+    int* d_queue_out
 ) {
-    int *d_queue_out;
-    CUDA_CHECK(cudaMalloc(&d_queue_out, scc_graph.num_nodes * sizeof(int)));
-    int *d_queue_out_alloc = d_queue_out;
-
     int queue_size = 0;
     CUDA_CHECK(cudaMemcpy(&queue_size, d_count_out, sizeof(int), cudaMemcpyDeviceToHost));
 
@@ -80,8 +77,6 @@ void deleteAndPropagate(
         CUDA_CHECK(cudaMemcpy(&queue_size, d_count_out, sizeof(int), cudaMemcpyDeviceToHost));
         std::swap(d_queue_in, d_queue_out);
     }
-
-    CUDA_CHECK(cudaFree(d_queue_out_alloc));
 }
 
 // Comparison of two pairs (count, node_id) to get the max count
@@ -108,11 +103,8 @@ struct CountLookup {
 // For each WCC find the node with the maximum property and its value
 void getMaxForWCC(
     const int* d_property, CSRRepr wcc_grouped, const int* d_sorted_wcc, // in
-    int* d_wcc_prop_nodes, int* d_wcc_prop_val                           // out
+    int* d_wcc_prop_nodes, int* d_wcc_prop_val, int* d_wcc_keys_out      // out
 ) {
-    int* d_wcc_keys_out;
-    CUDA_CHECK(cudaMalloc(&d_wcc_keys_out, wcc_grouped.num_nodes * sizeof(int)));
-
     CountLookup lookup{d_property};
     // Lazily map node_id -> reach_count without a temporary buffer.
     auto col_ind_ptr = thrust::device_ptr<int>(wcc_grouped.col_ind);
@@ -142,8 +134,6 @@ void getMaxForWCC(
         cuda::std::equal_to<int>(),
         MaxCountNode()
     );
-
-    CUDA_CHECK(cudaFree(d_wcc_keys_out));
 }
 
 // Get the complement of a WCC, there can be 3 scenarios:
@@ -267,97 +257,151 @@ __global__ void countOutgoingEdges(
 
 // Propagate the number of nodes reachable forwards by each node in the DAG
 // by processing the nodes in reverse topological order (children before parents)
-__global__ void propagateReachability(
+
+// Persistent kernel version: processes all levels in device-side loop
+__global__ void propagateReachability_persistent(
     int num_nodes,
     const int* const __restrict__ row_ptr,
     const int* const __restrict__ col_ind,
-    const int* const __restrict__ nodes_in_level,      // Array of node IDs in this level
-    int level_size,                 // How many nodes in this level
+    const int* const __restrict__ topo_order,
+    const int* const __restrict__ level_starts,
+    int num_levels,
     const int* const __restrict__ assignments,
-    unsigned long long* const __restrict__ reach_bits, // The bitset state (N x 1)
-    int batch_start_idx             // The global index where this batch starts
+    unsigned long long* const __restrict__ reach_bits,
+    int batch_start_idx
 ) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
 
-    for (int idx = tid; idx < level_size; idx += stride) {
-        int u = nodes_in_level[idx];
+    // Process levels in reverse topological order (children before parents)
+    for (int level = num_levels - 1; level >= 0; --level) {
+        int level_start = level_starts[level];
+        int level_end = level_starts[level + 1];
+        int level_count = level_end - level_start;
 
-        // Node is already assigned, skip
-        if (assignments[u] != -1) {
-            reach_bits[u] = 0;
-            continue;
+        for (int idx = tid; idx < level_count; idx += stride) {
+            int u = topo_order[level_start + idx];
+
+            // Node is already assigned, skip
+            if (assignments[u] != -1) {
+                reach_bits[u] = 0;
+                continue;
+            }
+
+            // I can reach myself
+            unsigned long long my_bits = 0;
+            if (u >= batch_start_idx && u < batch_start_idx + 64) {
+                my_bits = (1ULL << (u - batch_start_idx));
+            }
+
+            // I can reach all the nodes that my children can reach
+            for (int e = row_ptr[u]; e < row_ptr[u+1]; ++e) {
+                int v = col_ind[e];
+                my_bits |= reach_bits[v];
+            }
+
+            reach_bits[u] = my_bits;
         }
-
-        // I can reach myself
-        unsigned long long my_bits = 0;
-        if (u >= batch_start_idx && u < batch_start_idx + 64) {
-            my_bits = (1ULL << (u - batch_start_idx));
-        }
-
-        // I can reach all the nodes that my children can reach
-        for (int e = row_ptr[u]; e < row_ptr[u+1]; ++e) {
-            int v = col_ind[e];
-            my_bits |= reach_bits[v];
-        }
-
-        reach_bits[u] = my_bits;
+        __syncthreads(); // Ensure all threads finish this level before moving to the next
     }
 }
 
-// Count the number the number of nodes reachable in this batch
-__global__ void accumulateCounts(
+
+// Kernel to process all batches in parallel
+__global__ void propagateReachability_multiBatch(
     int num_nodes,
-    const unsigned long long* const __restrict__ reach_bits, 
-    int* const __restrict__ total_reach_counts
+    const int* __restrict__ row_ptr,
+    const int* __restrict__ col_ind,
+    const int* __restrict__ topo_order,
+    const int* __restrict__ level_starts,
+    int num_levels,
+    const int* __restrict__ assignments,
+    int batch_size,
+    int num_batches,
+    unsigned long long* __restrict__ reach_bits,
+    int* __restrict__ d_reach_counts
 ) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-    for (int idx = tid; idx < num_nodes; idx += stride) {
-        // __popcll counts number of set bits in a 64-bit integer
-        total_reach_counts[idx] += __popcll(reach_bits[idx]);
+    int batch_idx = blockIdx.x;
+    if (batch_idx >= num_batches) return;
+    int batch_start = batch_idx * batch_size;
+
+    // Each batch uses its own region in reach_bits (offset by batch_start)
+    unsigned long long* batch_reach_bits = reach_bits + batch_start;
+
+    // Initialize reachability bits for this batch
+    for (int i = threadIdx.x; i < batch_size && (batch_start + i) < num_nodes; i += blockDim.x) {
+        batch_reach_bits[i] = 0ULL;
+    }
+    __syncthreads();
+
+    // Process levels in reverse topological order (children before parents)
+    for (int level = num_levels - 1; level >= 0; --level) {
+        int level_start = level_starts[level];
+        int level_end = level_starts[level + 1];
+        int level_count = level_end - level_start;
+
+        for (int idx = threadIdx.x; idx < level_count; idx += blockDim.x) {
+            int u = topo_order[level_start + idx];
+            if (u < batch_start || u >= batch_start + batch_size) continue;
+
+            // Node is already assigned, skip
+            if (assignments[u] != -1) {
+                batch_reach_bits[u - batch_start] = 0;
+                continue;
+            }
+
+            // I can reach myself
+            unsigned long long my_bits = 0;
+            if (u >= batch_start && u < batch_start + 64) {
+                my_bits = (1ULL << (u - batch_start));
+            }
+
+            // I can reach all the nodes that my children can reach
+            for (int e = row_ptr[u]; e < row_ptr[u+1]; ++e) {
+                int v = col_ind[e];
+                if (v >= batch_start && v < batch_start + batch_size)
+                    my_bits |= batch_reach_bits[v - batch_start];
+            }
+
+            batch_reach_bits[u - batch_start] = my_bits;
+        }
+        __syncthreads();
+    }
+
+    // After processing all levels, accumulate reachability counts for this batch
+    for (int i = threadIdx.x; i < batch_size && (batch_start + i) < num_nodes; i += blockDim.x) {
+        atomicAdd(&d_reach_counts[batch_start + i], __popcll(batch_reach_bits[i]));
     }
 }
 
-// Compute the number of nodes reachable by each node
-// TODO: Maybe we can optime this by only computing the number reachability in each WCC
-// Also, we only need the count of the sources
 void countReachability(CSRRepr scc_graph, TopoResult topo_result, int* assignments, int* d_reach_counts) {
+    int batch_size = 64;
+    int num_batches = (scc_graph.num_nodes + batch_size - 1) / batch_size;
     unsigned long long *d_reach_bits;
     CUDA_CHECK(cudaMalloc(&d_reach_bits, scc_graph.num_nodes * sizeof(unsigned long long)));
 
-    for (int batch_start = 0; batch_start < scc_graph.num_nodes; batch_start += 64) {
-        // Initialize reachability bits for this batch
-        CUDA_CHECK(cudaMemset(d_reach_bits, 0, scc_graph.num_nodes * sizeof(unsigned long long)));
+    // Allocate and copy level_starts to device
+    int num_level_starts = topo_result.level_starts.size();
+    int* d_level_starts;
+    CUDA_CHECK(cudaMalloc(&d_level_starts, num_level_starts * sizeof(int)));
+    CUDA_CHECK(cudaMemcpy(d_level_starts, topo_result.level_starts.data(), num_level_starts * sizeof(int), cudaMemcpyHostToDevice));
 
-        // Process levels in reverse topological order (children before parents)
-        for (int level = topo_result.num_levels - 1; level >= 0; level--) {
-            int level_start = topo_result.level_starts[level];
-            int level_end = topo_result.level_starts[level + 1];
-            int level_count = level_end - level_start;
+    // Launch one block per batch, each block processes one batch
+    propagateReachability_multiBatch<<<num_batches, 64>>>(
+        scc_graph.num_nodes,
+        scc_graph.row_ptr,
+        scc_graph.col_ind,
+        topo_result.d_topo_order,
+        d_level_starts,
+        topo_result.num_levels,
+        assignments,
+        batch_size,
+        num_batches,
+        d_reach_bits,
+        d_reach_counts
+    );
 
-            if (level_count == 0) continue;
-
-            propagateReachability<<<gridStrideBlocks(level_count), NumThPerBlock>>>(
-                scc_graph.num_nodes,
-                scc_graph.row_ptr,
-                scc_graph.col_ind,
-                topo_result.d_topo_order + level_start,
-                level_count,
-                assignments,
-                d_reach_bits,
-                batch_start
-            );
-        }
-
-        // After processing all levels, accumulate reachability counts
-        accumulateCounts<<<gridStrideBlocks(scc_graph.num_nodes), NumThPerBlock>>>(
-            scc_graph.num_nodes,
-            d_reach_bits,
-            d_reach_counts
-        );
-    }
-
+    CUDA_CHECK(cudaFree(d_level_starts));
     CUDA_CHECK(cudaFree(d_reach_bits));
 }
 
@@ -477,14 +521,18 @@ void solve(
     // Allocate memory for the max node per WCC and its count
     int* d_max_nodes;
     int* d_max_property;
+    int* d_wcc_keys_out;
     CUDA_CHECK(cudaMalloc(&d_max_nodes, wcc_grouped.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_max_property, wcc_grouped.num_nodes * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_wcc_keys_out, wcc_grouped.num_nodes * sizeof(int)));
 
     // Alloc memory for the queue of nodes to delete
     int* d_queue;
     int* d_queue_count;
+    int* d_queue_out;
     CUDA_CHECK(cudaMalloc(&d_queue, scc_graph.num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_queue_count, sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_queue_out, scc_graph.num_nodes * sizeof(int)));
 
     // Get the sorted unique WCC ids
     int* d_unique_wcc_ids;
@@ -500,7 +548,7 @@ void solve(
 
     while (true) {
         // Get node with max property for each WCC
-        getMaxForWCC(d_property_vals, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_property);
+        getMaxForWCC(d_property_vals, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_property, d_wcc_keys_out);
 
         // Get the nodes to eliminate and put them in the queue
         CUDA_CHECK(cudaMemset(d_queue_count, 0, sizeof(int)));
@@ -525,7 +573,8 @@ void solve(
             scc_graph,
             d_assignments,
             d_queue,
-            d_queue_count
+            d_queue_count,
+            d_queue_out
         );
         
         // Update the property values for the next iteration
@@ -542,6 +591,8 @@ void solve(
     CUDA_CHECK(cudaFree(d_property_vals));
     CUDA_CHECK(cudaFree(d_max_nodes));
     CUDA_CHECK(cudaFree(d_max_property));
+    CUDA_CHECK(cudaFree(d_wcc_keys_out));
     CUDA_CHECK(cudaFree(d_queue));
     CUDA_CHECK(cudaFree(d_queue_count));
+    CUDA_CHECK(cudaFree(d_queue_out));
 }
