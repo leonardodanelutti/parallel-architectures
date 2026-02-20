@@ -307,9 +307,8 @@ __global__ void propagateReachability_persistent(
 }
 
 
-// Kernel to process all batches in parallel
-__global__ void propagateReachability_multiBatch(
-    int num_nodes,
+// Kernel to process a massive chunk of batches in parallel
+__global__ void propagateReachability_chunked(
     const int* __restrict__ row_ptr,
     const int* __restrict__ col_ind,
     const int* __restrict__ topo_order,
@@ -317,89 +316,116 @@ __global__ void propagateReachability_multiBatch(
     int num_levels,
     const int* __restrict__ assignments,
     int batch_size,
-    int num_batches,
+    int chunk_batches, 
+    int global_batch_offset, // Tells the block which chunk of the graph it handles
+    int num_nodes,
     unsigned long long* __restrict__ reach_bits,
     int* __restrict__ d_reach_counts
 ) {
     int batch_idx = blockIdx.x;
-    if (batch_idx >= num_batches) return;
-    int batch_start = batch_idx * batch_size;
-
-    // Each batch uses its own region in reach_bits (offset by batch_start)
-    unsigned long long* batch_reach_bits = reach_bits + batch_start;
-
-    // Initialize reachability bits for this batch
-    for (int i = threadIdx.x; i < batch_size && (batch_start + i) < num_nodes; i += blockDim.x) {
-        batch_reach_bits[i] = 0ULL;
-    }
-    __syncthreads();
+    if (batch_idx >= chunk_batches) return;
+    
+    // Calculate the true global batch ID and the starting node for this block
+    int global_batch = global_batch_offset + batch_idx;
+    int batch_start = global_batch * batch_size;
+    
+    // Give this block its own isolated 1D array from the 2D memory grid
+    unsigned long long* batch_reach_bits = reach_bits + ((size_t)batch_idx * num_nodes);
 
     // Process levels in reverse topological order (children before parents)
     for (int level = num_levels - 1; level >= 0; --level) {
         int level_start = level_starts[level];
         int level_end = level_starts[level + 1];
-        int level_count = level_end - level_start;
+        int count = level_end - level_start;
+        
+        if (count == 0) continue;
 
-        for (int idx = threadIdx.x; idx < level_count; idx += blockDim.x) {
+        for (int idx = threadIdx.x; idx < count; idx += blockDim.x) {
             int u = topo_order[level_start + idx];
-            if (u < batch_start || u >= batch_start + batch_size) continue;
 
-            // Node is already assigned, skip
+            // Node is already assigned, skip it
             if (assignments[u] != -1) {
-                batch_reach_bits[u - batch_start] = 0;
+                batch_reach_bits[u] = 0ULL;
                 continue;
             }
 
-            // I can reach myself
-            unsigned long long my_bits = 0;
-            if (u >= batch_start && u < batch_start + 64) {
+            unsigned long long my_bits = 0ULL;
+            
+            // If I am part of this block's target batch, I can reach myself
+            if (u >= batch_start && u < batch_start + batch_size) {
                 my_bits = (1ULL << (u - batch_start));
             }
 
             // I can reach all the nodes that my children can reach
             for (int e = row_ptr[u]; e < row_ptr[u+1]; ++e) {
                 int v = col_ind[e];
-                if (v >= batch_start && v < batch_start + batch_size)
-                    my_bits |= batch_reach_bits[v - batch_start];
+                // Read safely from the child, no matter where they are
+                my_bits |= batch_reach_bits[v]; 
             }
 
-            batch_reach_bits[u - batch_start] = my_bits;
+            // Store my final reachability for this batch
+            batch_reach_bits[u] = my_bits;
         }
+        
+        // Wait for all threads to finish this topological level before moving to parents
         __syncthreads();
     }
 
-    // After processing all levels, accumulate reachability counts for this batch
-    for (int i = threadIdx.x; i < batch_size && (batch_start + i) < num_nodes; i += blockDim.x) {
-        atomicAdd(&d_reach_counts[batch_start + i], __popcll(batch_reach_bits[i]));
+    // Accumulate the reachability counts for this specific batch
+    for (int i = threadIdx.x; i < num_nodes; i += blockDim.x) {
+        unsigned long long final_bits = batch_reach_bits[i];
+        if (final_bits != 0ULL) {
+            atomicAdd(&d_reach_counts[i], __popcll(final_bits));
+        }
     }
 }
 
 void countReachability(CSRRepr scc_graph, TopoResult topo_result, int* assignments, int* d_reach_counts) {
     int batch_size = 64;
-    int num_batches = (scc_graph.num_nodes + batch_size - 1) / batch_size;
-    unsigned long long *d_reach_bits;
-    CUDA_CHECK(cudaMalloc(&d_reach_bits, scc_graph.num_nodes * sizeof(unsigned long long)));
+    // Calculate total number of batches needed for the graph [cite: 35]
+    int total_batches = (scc_graph.num_nodes + batch_size - 1) / batch_size;
+    
+    // --- VRAM Protection (Chunking) ---
+    size_t bytes_per_batch = (size_t)scc_graph.num_nodes * sizeof(unsigned long long);
+    size_t max_memory = 500ULL * 1024 * 1024; // 500 MB memory limit
+    int batches_per_chunk = max_memory / bytes_per_batch;
+    if (batches_per_chunk == 0) batches_per_chunk = 1; // Ensure we always run at least 1 batch
+    
+    unsigned long long* d_reach_bits;
+    // Allocate memory for exactly one chunk's worth of batches
+    CUDA_CHECK(cudaMalloc(&d_reach_bits, (size_t)batches_per_chunk * bytes_per_batch));
 
-    // Allocate and copy level_starts to device
+    // Allocate and copy level_starts to device [cite: 36, 37]
     int num_level_starts = topo_result.level_starts.size();
     int* d_level_starts;
     CUDA_CHECK(cudaMalloc(&d_level_starts, num_level_starts * sizeof(int)));
     CUDA_CHECK(cudaMemcpy(d_level_starts, topo_result.level_starts.data(), num_level_starts * sizeof(int), cudaMemcpyHostToDevice));
 
-    // Launch one block per batch, each block processes one batch
-    propagateReachability_multiBatch<<<num_batches, 64>>>(
-        scc_graph.num_nodes,
-        scc_graph.row_ptr,
-        scc_graph.col_ind,
-        topo_result.d_topo_order,
-        d_level_starts,
-        topo_result.num_levels,
-        assignments,
-        batch_size,
-        num_batches,
-        d_reach_bits,
-        d_reach_counts
-    );
+    // Process the graph in large chunks to save memory
+    for (int chunk_start = 0; chunk_start < total_batches; chunk_start += batches_per_chunk) {
+        
+        // Calculate how many batches are in this current chunk
+        int current_chunk_batches = std::min(batches_per_chunk, total_batches - chunk_start);
+        
+        // Zero out the 2D memory grid dynamically using cudaMemset on the host
+        CUDA_CHECK(cudaMemset(d_reach_bits, 0, (size_t)current_chunk_batches * bytes_per_batch));
+
+        // Launch the massive parallel kernel for this chunk
+        propagateReachability_chunked<<<current_chunk_batches, 256>>>(
+            scc_graph.row_ptr,
+            scc_graph.col_ind,
+            topo_result.d_topo_order,
+            d_level_starts,
+            topo_result.num_levels,
+            assignments,
+            batch_size,
+            current_chunk_batches,
+            chunk_start, // Global offset
+            scc_graph.num_nodes,
+            d_reach_bits,
+            d_reach_counts
+        );
+    }
 
     CUDA_CHECK(cudaFree(d_level_starts));
     CUDA_CHECK(cudaFree(d_reach_bits));
