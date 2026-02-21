@@ -106,6 +106,7 @@ int main(int argc, char* argv[]) {
     TopoResult topo_result = topologicalSort(scc_graph);
     benchEnd(g_bench, "topo_sort", BENCH_DEVICE);
 
+    // Compute the backbone of the condensed graph
     benchStart(g_bench, BENCH_DEVICE);
     int* d_backbone_assignments = computeBackbone(
         scc_graph,
@@ -113,10 +114,12 @@ int main(int argc, char* argv[]) {
     );
     benchEnd(g_bench, "backbone", BENCH_DEVICE);
 
+    // Compute WCCs of the condensed graph with the backbone assignments
     benchStart(g_bench, BENCH_DEVICE);
     int* d_wcc_map = computeWCC(scc_graph, d_backbone_assignments);
     benchEnd(g_bench, "wcc", BENCH_DEVICE);
 
+    // Get CSR representation of the WCCs grouped
     int* d_sorted_wcc = nullptr;
     CUDA_CHECK(cudaMalloc(&d_sorted_wcc, scc_graph.num_nodes * sizeof(int)));
     benchStart(g_bench, BENCH_DEVICE);
@@ -124,6 +127,7 @@ int main(int argc, char* argv[]) {
     benchEnd(g_bench, "wcc_grouped", BENCH_DEVICE);
     benchSetGraphStats(g_bench, scc_graph.num_nodes, wcc_grouped.num_nodes, topo_result.num_levels);
 
+    // Run heuristics
     auto run_heuristic = [&](HeuristicKind which) {
         if (which < HEUR_1 || which > HEUR_4) {
             return false;
@@ -157,12 +161,10 @@ int main(int argc, char* argv[]) {
 
             // Check if assignments are correct
             /*
-            if (which != 1 && which != 2) {
-                int* h_backbone_assignments = new int[scc_graph.num_nodes];
-                CUDA_CHECK(cudaMemcpy(h_backbone_assignments, d_backbone_assignments, scc_graph.num_nodes * sizeof(int), cudaMemcpyDeviceToHost));
-                checkAssignment(scc_graph, h_backbone_assignments);
-                free(h_backbone_assignments);
-            }
+            int* h_backbone_assignments = new int[scc_graph.num_nodes];
+            CUDA_CHECK(cudaMemcpy(h_backbone_assignments, d_backbone_assignments, scc_graph.num_nodes * sizeof(int), cudaMemcpyDeviceToHost));
+            checkAssignment(scc_graph, h_backbone_assignments);
+            free(h_backbone_assignments);
             */
         }
 

@@ -161,6 +161,7 @@ __host__ __device__ inline int getWCCComplementKernel(
     return -1; // For backbone and odd WCCs
 }
 
+// For each WCC-pair choose the node with the maximum property value and assign it to True (and its complement to False).
 __global__ void nodeToEliminate(
     const int* const __restrict__ nodes,
     const int* const __restrict__ max_property,
@@ -192,6 +193,7 @@ __global__ void nodeToEliminate(
     }
 }
 
+// Set to 1 the nodes that are sources (the complement of sinks)
 __global__ void getSources(
     const int* const __restrict__ row_ptr, 
     const int* const __restrict__ col_ind,
@@ -255,59 +257,9 @@ __global__ void countOutgoingEdges(
     }
 }
 
-// Propagate the number of nodes reachable forwards by each node in the DAG
-// by processing the nodes in reverse topological order (children before parents)
-
-// Persistent kernel version: processes all levels in device-side loop
-__global__ void propagateReachability_persistent(
-    int num_nodes,
-    const int* const __restrict__ row_ptr,
-    const int* const __restrict__ col_ind,
-    const int* const __restrict__ topo_order,
-    const int* const __restrict__ level_starts,
-    int num_levels,
-    const int* const __restrict__ assignments,
-    unsigned long long* const __restrict__ reach_bits,
-    int batch_start_idx
-) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-
-    // Process levels in reverse topological order (children before parents)
-    for (int level = num_levels - 1; level >= 0; --level) {
-        int level_start = level_starts[level];
-        int level_end = level_starts[level + 1];
-        int level_count = level_end - level_start;
-
-        for (int idx = tid; idx < level_count; idx += stride) {
-            int u = topo_order[level_start + idx];
-
-            // Node is already assigned, skip
-            if (assignments[u] != -1) {
-                reach_bits[u] = 0;
-                continue;
-            }
-
-            // I can reach myself
-            unsigned long long my_bits = 0;
-            if (u >= batch_start_idx && u < batch_start_idx + 64) {
-                my_bits = (1ULL << (u - batch_start_idx));
-            }
-
-            // I can reach all the nodes that my children can reach
-            for (int e = row_ptr[u]; e < row_ptr[u+1]; ++e) {
-                int v = col_ind[e];
-                my_bits |= reach_bits[v];
-            }
-
-            reach_bits[u] = my_bits;
-        }
-        __syncthreads(); // Ensure all threads finish this level before moving to the next
-    }
-}
-
-
-// Kernel to process a massive chunk of batches in parallel
+// Propagates reachability using bitsets. 
+// We use a "reverse topological" approach: by starting at the leaves and 
+// working up to the roots, each parent simply ORs the bitsets of its children.
 __global__ void propagateReachability_chunked(
     const int* __restrict__ row_ptr,
     const int* __restrict__ col_ind,
@@ -317,7 +269,7 @@ __global__ void propagateReachability_chunked(
     const int* __restrict__ assignments,
     int batch_size,
     int chunk_batches, 
-    int global_batch_offset, // Tells the block which chunk of the graph it handles
+    int global_batch_offset,
     int num_nodes,
     unsigned long long* __restrict__ reach_bits,
     int* __restrict__ d_reach_counts
@@ -325,14 +277,14 @@ __global__ void propagateReachability_chunked(
     int batch_idx = blockIdx.x;
     if (batch_idx >= chunk_batches) return;
     
-    // Calculate the true global batch ID and the starting node for this block
+    // Each CUDA block handles one specific "batch" of 64 nodes
     int global_batch = global_batch_offset + batch_idx;
     int batch_start = global_batch * batch_size;
     
-    // Give this block its own isolated 1D array from the 2D memory grid
+    // Offset our pointer so this block works on its own slice of the bitset memory
     unsigned long long* batch_reach_bits = reach_bits + ((size_t)batch_idx * num_nodes);
 
-    // Process levels in reverse topological order (children before parents)
+    // Traverse the DAG in topological order, level by level
     for (int level = num_levels - 1; level >= 0; --level) {
         int level_start = level_starts[level];
         int level_end = level_starts[level + 1];
@@ -340,10 +292,11 @@ __global__ void propagateReachability_chunked(
         
         if (count == 0) continue;
 
+        // Threads in the block split the nodes available at this topological level
         for (int idx = threadIdx.x; idx < count; idx += blockDim.x) {
             int u = topo_order[level_start + idx];
 
-            // Node is already assigned, skip it
+            // If the node is already "claimed" or filtered out, ignore it
             if (assignments[u] != -1) {
                 batch_reach_bits[u] = 0ULL;
                 continue;
@@ -351,27 +304,26 @@ __global__ void propagateReachability_chunked(
 
             unsigned long long my_bits = 0ULL;
             
-            // If I am part of this block's target batch, I can reach myself
+            // If this node falls within our current 64-node window, mark its own bit
             if (u >= batch_start && u < batch_start + batch_size) {
                 my_bits = (1ULL << (u - batch_start));
             }
 
-            // I can reach all the nodes that my children can reach
+            // I can reach everything my children can reach
             for (int e = row_ptr[u]; e < row_ptr[u+1]; ++e) {
                 int v = col_ind[e];
-                // Read safely from the child, no matter where they are
                 my_bits |= batch_reach_bits[v]; 
             }
 
-            // Store my final reachability for this batch
             batch_reach_bits[u] = my_bits;
         }
         
-        // Wait for all threads to finish this topological level before moving to parents
+        // Ensure all children at this level are written 
+        // before the parents in the next level try to read them.
         __syncthreads();
     }
 
-    // Accumulate the reachability counts for this specific batch
+    // Convert the bitsets into actual integers (counts) and add to global results
     for (int i = threadIdx.x; i < num_nodes; i += blockDim.x) {
         unsigned long long final_bits = batch_reach_bits[i];
         if (final_bits != 0ULL) {
@@ -381,52 +333,50 @@ __global__ void propagateReachability_chunked(
 }
 
 void countReachability(CSRRepr scc_graph, TopoResult topo_result, int* assignments, int* d_reach_counts) {
-    int batch_size = 64;
-    // Calculate total number of batches needed for the graph [cite: 35]
-    int total_batches = (scc_graph.num_nodes + batch_size - 1) / batch_size;
+    const int BITS_IN_ULL = 64; 
+    int total_batches = (scc_graph.num_nodes + BITS_IN_ULL - 1) / BITS_IN_ULL;
     
-    // --- VRAM Protection (Chunking) ---
+    // Bitset matrices can consume a lot of memory, so we allocate a large chunk and divide it into "batches" of 64 nodes each.
     size_t bytes_per_batch = (size_t)scc_graph.num_nodes * sizeof(unsigned long long);
-    size_t max_memory = 500ULL * 1024 * 1024; // 500 MB memory limit
+    size_t max_memory = 500ULL * 1024 * 1024; 
     int batches_per_chunk = max_memory / bytes_per_batch;
-    if (batches_per_chunk == 0) batches_per_chunk = 1; // Ensure we always run at least 1 batch
+    if (batches_per_chunk == 0) batches_per_chunk = 1; 
     
     unsigned long long* d_reach_bits;
-    // Allocate memory for exactly one chunk's worth of batches
     CUDA_CHECK(cudaMalloc(&d_reach_bits, (size_t)batches_per_chunk * bytes_per_batch));
 
-    // Allocate and copy level_starts to device [cite: 36, 37]
+    // Move topological data to the GPU
     int num_level_starts = topo_result.level_starts.size();
     int* d_level_starts;
     CUDA_CHECK(cudaMalloc(&d_level_starts, num_level_starts * sizeof(int)));
     CUDA_CHECK(cudaMemcpy(d_level_starts, topo_result.level_starts.data(), num_level_starts * sizeof(int), cudaMemcpyHostToDevice));
 
-    // Process the graph in large chunks to save memory
+    // Chunking Loop: Process as many bit-batches as fit in our memory budget
     for (int chunk_start = 0; chunk_start < total_batches; chunk_start += batches_per_chunk) {
         
-        // Calculate how many batches are in this current chunk
         int current_chunk_batches = std::min(batches_per_chunk, total_batches - chunk_start);
         
-        // Zero out the 2D memory grid dynamically using cudaMemset on the host
+        // Clear the workspace for this chunk
         CUDA_CHECK(cudaMemset(d_reach_bits, 0, (size_t)current_chunk_batches * bytes_per_batch));
 
-        // Launch the massive parallel kernel for this chunk
-        propagateReachability_chunked<<<current_chunk_batches, 256>>>(
+        // Launch the kernel. Each block handles one batch of 64 bits.
+        propagateReachability_chunked<<<current_chunk_batches, NumThPerBlock>>>(
             scc_graph.row_ptr,
             scc_graph.col_ind,
             topo_result.d_topo_order,
             d_level_starts,
             topo_result.num_levels,
             assignments,
-            batch_size,
+            BITS_IN_ULL,
             current_chunk_batches,
-            chunk_start, // Global offset
+            chunk_start, 
             scc_graph.num_nodes,
             d_reach_bits,
             d_reach_counts
         );
     }
 
+    // Clean up
     CUDA_CHECK(cudaFree(d_level_starts));
     CUDA_CHECK(cudaFree(d_reach_bits));
 }
@@ -436,12 +386,13 @@ void initProperty(
     CSRRepr scc_graph,
     TopoResult topo_result,
     int* d_assignments,
-    int* d_property_vals,      // out
+    int* d_property_vals,
     int num_wccs,
     HeuristicKind heuristic
 ) {
     switch (heuristic) {
         case HEUR_1:
+            // Set to 1 the nodes that are sources (the complement of sinks)
             CUDA_CHECK(cudaMemset(d_property_vals, 0, scc_graph.num_nodes * sizeof(int)));
             getSources<<<gridStrideBlocks(scc_graph.num_nodes), NumThPerBlock>>>(
                 scc_graph.row_ptr,
@@ -463,6 +414,7 @@ void initProperty(
             break;
         case HEUR_3:
         case HEUR_4:
+            // Count reachability for all nodes
             countReachability(scc_graph, topo_result, d_assignments, d_property_vals);
             break;
     }
@@ -496,6 +448,7 @@ void updateProperty(
 ) {
     switch (heuristic) {
         case HEUR_1:
+            // Set to 1 the nodes that are sources (the complement of sinks)
             CUDA_CHECK(cudaMemset(d_property_vals, 0, scc_graph.num_nodes * sizeof(int)));
             getSources<<<gridStrideBlocks(scc_graph.num_nodes), NumThPerBlock>>>(
                 scc_graph.row_ptr,
@@ -516,12 +469,11 @@ void updateProperty(
             );
             break;
         case HEUR_3:
-        {
+            // Set to 0 the rechability counts of the nodes that are assigned (they should not be considered in the next iteration)
             mask_values(d_property_vals, d_assignments, scc_graph.num_nodes);
             break;
-        }
         case HEUR_4:
-            // Count reachability for all nodes
+            // Re-compute reachability for all nodes
             CUDA_CHECK(cudaMemset(d_property_vals, 0, scc_graph.num_nodes * sizeof(int)));
             countReachability(scc_graph, topo_result, d_assignments, d_property_vals);
             break;
