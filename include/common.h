@@ -142,6 +142,7 @@ inline void read2SATInstance(
     int& num_clauses,
     int& lower_bound,
     int& upper_bound,
+    float& time,
     bool& bounds_present,
     CSRRepr& graph
 ) {
@@ -153,6 +154,7 @@ inline void read2SATInstance(
 
     lower_bound = -1;
     upper_bound = -1;
+    time = -1.0f;
     bounds_present = false;
 
     std::string token;
@@ -162,7 +164,7 @@ inline void read2SATInstance(
         if (token == "c") {
             if (file >> token) {
                 if (token == "bounds") {
-                    file >> lower_bound >> upper_bound;
+                    file >> lower_bound >> upper_bound >> time;
                     bounds_present = true;
                 } else {
                     file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');

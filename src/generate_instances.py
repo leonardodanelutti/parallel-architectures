@@ -39,9 +39,9 @@ def run_clingo(num_vars, clauses, timeout=10):
         unsat = handle.get().unsatisfiable
     lower_bound = ctl.statistics["summary"]["lower"][0]
     upper_bound = ctl.statistics["summary"]["costs"][0]
-    # print(ctl.statistics["summary"]["times"]["total"])
+    time = ctl.statistics["summary"]["times"]["total"]
                 
-    return lower_bound, upper_bound, unsat
+    return lower_bound, upper_bound, unsat, time
 
 
 def generate_instance(num_vars, num_clauses, filename, run_solver=True, solver_timeout=10):
@@ -60,7 +60,7 @@ def generate_instance(num_vars, num_clauses, filename, run_solver=True, solver_t
         clauses.append((lit1, lit2))
     
     if run_solver:
-        lower_bound, upper_bound, unsat = run_clingo(num_vars, clauses, timeout=solver_timeout)
+        lower_bound, upper_bound, unsat, time = run_clingo(num_vars, clauses, timeout=solver_timeout)
     else:
         lower_bound = upper_bound = None
         unsat = None
@@ -73,7 +73,7 @@ def generate_instance(num_vars, num_clauses, filename, run_solver=True, solver_t
             print(f"Instance {filename} is UNSAT. Skipping.")
             exit(1)
         else:
-            f.write(f"c bounds {int(lower_bound)} {int(upper_bound)}\n")
+            f.write(f"c bounds {int(lower_bound)} {int(upper_bound)} {time:.2f}\n")
         f.write(f"p cnf {num_vars} {num_clauses}\n")
         for lit1, lit2 in clauses:
             f.write(f"{lit1} {lit2} 0\n")

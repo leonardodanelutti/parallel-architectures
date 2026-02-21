@@ -14,6 +14,7 @@ void BenchmarkLogger::setInstanceInfo(
     int num_clauses,
     int lower_bound,
     int upper_bound,
+    float time,
     bool bounds_present
 ) {
     if (!enabled_) return;
@@ -21,6 +22,7 @@ void BenchmarkLogger::setInstanceInfo(
     num_clauses_ = num_clauses;
     lower_bound_ = lower_bound;
     upper_bound_ = upper_bound;
+    time_ = time;
     bounds_present_ = bounds_present;
 }
 
@@ -194,10 +196,11 @@ void benchSetInstanceInfo(
     int num_clauses,
     int lower_bound,
     int upper_bound,
+    float time,
     bool bounds_present
 ) {
     if (!state.enabled) return;
-    state.logger.setInstanceInfo(num_vars, num_clauses, lower_bound, upper_bound, bounds_present);
+    state.logger.setInstanceInfo(num_vars, num_clauses, lower_bound, upper_bound, time, bounds_present);
 }
 
 void benchSetGraphStats(BenchmarkState& state, int num_scc, int num_wcc, int num_levels) {

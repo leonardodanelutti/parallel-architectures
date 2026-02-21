@@ -24,13 +24,14 @@ int main(int argc, char* argv[]) {
 
     // read 2SAT instance from file
     int num_vars, num_clauses, lower_bound, upper_bound;
+    float time;
     bool bounds_present;
     CSRRepr graph;
     
     benchStart(g_bench, BENCH_HOST);
-    read2SATInstance(config.filename, num_vars, num_clauses, lower_bound, upper_bound, bounds_present, graph);
+    read2SATInstance(config.filename, num_vars, num_clauses, lower_bound, upper_bound, time, bounds_present, graph);
     benchEnd(g_bench, "read_instance", BENCH_HOST);
-    benchSetInstanceInfo(g_bench, num_vars, num_clauses, lower_bound, upper_bound, bounds_present);
+    benchSetInstanceInfo(g_bench, num_vars, num_clauses, lower_bound, upper_bound, time, bounds_present);
 
     // Allocate device memory
     CSRRepr d_graph;
