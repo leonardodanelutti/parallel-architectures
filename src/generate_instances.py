@@ -78,6 +78,34 @@ def generate_instance(num_vars, num_clauses, filename, run_solver=True, solver_t
         for lit1, lit2 in clauses:
             f.write(f"{lit1} {lit2} 0\n")
 
+def select_value(idx, start, end, count, mode):
+    if count == 1:
+        return start
+    if mode == "linear":
+        # Integer for num_vars, float for ratio
+        val = start + idx * (end - start) / (count - 1)
+        # If all are int, return int
+        if all(isinstance(x, int) for x in [start, end, count]):
+            return int(val)
+        return val
+    elif mode == "uniform":
+        # Integer for num_vars, float for ratio
+        if all(isinstance(x, int) for x in [start, end, count]):
+            return random.randint(start, end)
+        return random.uniform(start, end)
+    elif mode == "log_uniform":
+        import math
+        log_start = math.log(start)
+        log_end = math.log(end)
+        log_val = random.uniform(log_start, log_end)
+        val = math.exp(log_val)
+        # Clamp to [start, end]
+        val = max(start, min(val, end))
+
+        return int(round(val))
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+
 
 def main():
     if SEED is not None:
@@ -99,17 +127,16 @@ def main():
     
     total_instances = args.vars_num * args.ratios_num
     
+    num_vars_mode = "linear"  # Options: "linear", "uniform", "inverse_uniform"
+    ratio_mode = "linear"     # Options: "linear", "uniform", "inverse_uniform"
+
     with tqdm(total=total_instances, desc="Generating instances") as pbar:
         for v in range(args.vars_num):
-            num_vars = args.num_vars_start if args.vars_num == 1 else \
-                       args.num_vars_start + v * (args.num_vars_end - args.num_vars_start) // (args.vars_num - 1)
-
+            num_vars = select_value(v, args.num_vars_start, args.num_vars_end, args.vars_num, num_vars_mode)
             for r in range(args.ratios_num):
-                ratio = args.ratio_start if args.ratios_num == 1 else \
-                        args.ratio_start + r * (args.ratio_end - args.ratio_start) / (args.ratios_num - 1)
-
+                ratio = select_value(r, args.ratio_start, args.ratio_end, args.ratios_num, ratio_mode)
                 num_clauses = int(round(ratio * num_vars))
-                ratio_label = f"{ratio:.2f}".rstrip('0').rstrip('.')
+                ratio_label = f"{ratio:.2f}"
                 output_file = Path(args.folder) / f"instance_{num_vars}v{v}_{ratio_label}r{r}.cnf"
                 generate_instance(
                     num_vars,
@@ -124,5 +151,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # python3 src/generate_instances.py 100 1000 20 0.5 3.5 30 ./instances_grid/ --clingo-timeout 10
+    # python3 src/generate_instances.py 100 1000 21 0.5 3.5 31 ./instances/grid/ --clingo-timeout 60
     main()
