@@ -43,15 +43,22 @@ void BenchmarkLogger::record(const std::string& phase, double wall_ms, float gpu
         wall_ms,
         gpu_ms,
         num_assignments,
+        -1,
         total_bytes - free_bytes,
         free_bytes,
         total_bytes
     });
 }
 
+void BenchmarkLogger::setNumLoops(int num_loops) {
+    if (!enabled_) return;
+    num_loops_ = num_loops;
+}
+
 void BenchmarkLogger::setLastAssignments(int num_assignments) {
     if (!enabled_ || rows_.empty()) return;
     rows_.back().num_assignments = num_assignments;
+    rows_.back().num_loops = num_loops_;
 }
 
 void BenchmarkLogger::flush() const {
@@ -70,8 +77,8 @@ void BenchmarkLogger::flush() const {
     }
 
     if (write_header) {
-        out << "filename,heuristic,num_vars,num_clauses,lower_bound,upper_bound,bounds_present,"
-               "num_scc,num_wcc,num_levels,phase,wall_ms,gpu_ms,used_bytes,free_bytes,total_bytes,num_assignments"
+        out << "filename,heuristic,num_vars,num_clauses,lower_bound,upper_bound,bounds_present," 
+               "num_scc,num_wcc,num_levels,phase,wall_ms,gpu_ms,used_bytes,free_bytes,total_bytes,num_loops,num_assignments"
             << std::endl;
     }
 
@@ -92,6 +99,7 @@ void BenchmarkLogger::flush() const {
             << row.used_bytes << ','
             << row.free_bytes << ','
             << row.total_bytes << ','
+            << row.num_loops << ','
             << row.num_assignments << std::endl;
     }
 }
@@ -168,6 +176,11 @@ void benchStopTotal(BenchmarkState& state) {
 void benchFlush(BenchmarkState& state) {
     if (!state.enabled) return;
     state.logger.flush();
+}
+
+void benchSetNumLoops(BenchmarkState& state, int num_loops) {
+    if (!state.enabled) return;
+    state.logger.setNumLoops(num_loops);
 }
 
 void benchSetLastAssignments(BenchmarkState& state, int num_assignments) {

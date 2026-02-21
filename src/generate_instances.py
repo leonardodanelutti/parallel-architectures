@@ -127,8 +127,8 @@ def main():
     
     total_instances = args.vars_num * args.ratios_num
     
-    num_vars_mode = "linear"  # Options: "linear", "uniform", "inverse_uniform"
-    ratio_mode = "linear"     # Options: "linear", "uniform", "inverse_uniform"
+    num_vars_mode = "linear"  # Options: "linear", "uniform", "log_uniform"
+    ratio_mode = "linear"     # Options: "linear", "uniform", "log_uniform"
 
     with tqdm(total=total_instances, desc="Generating instances") as pbar:
         for v in range(args.vars_num):
@@ -151,5 +151,7 @@ def main():
 
 
 if __name__ == "__main__":
-    # python3 src/generate_instances.py 100 1000 21 0.5 3.5 31 ./instances/grid/ --clingo-timeout 60
+    # python3 src/generate_instances.py 100 5000 41 0.5 4.5 41 ./instances/grid/
+    # python3 src/generate_instances.py 600 600 10 0.5 5.5 51 ./instances/ratio_1000/ --clingo-timeout 400
+    # python3 src/generate_instances.py 1000 1000000 200 1.8 1.8 1 ./instances/vars_1.8/
     main()

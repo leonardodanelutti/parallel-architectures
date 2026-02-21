@@ -1,5 +1,6 @@
 #include "../include/common.h"
 #include "../include/cuda_utils.h"
+#include "../include/benchmark.h"
 
 #include <thrust/device_ptr.h>
 #include <thrust/execution_policy.h>
@@ -524,7 +525,9 @@ void solve(
         d_unique_wcc_ids_ptr
     );
 
+    int num_loops = 0;
     while (true) {
+        num_loops++;
         // Get node with max property for each WCC
         getMaxForWCC(d_property_vals, wcc_grouped, d_sorted_wcc, d_max_nodes, d_max_property, d_wcc_keys_out);
 
@@ -564,6 +567,7 @@ void solve(
             heuristic
         );
     }
+    benchSetNumLoops(g_bench, num_loops);
 
     // Cleanup
     CUDA_CHECK(cudaFree(d_property_vals));

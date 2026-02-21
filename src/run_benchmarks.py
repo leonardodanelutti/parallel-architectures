@@ -10,6 +10,7 @@ def parse_args():
         description="Run the parallel solver on all .cnf files in a folder with benchmarking."
     )
     parser.add_argument("folder", help="Folder containing .cnf files")
+    parser.add_argument("heuristics", help="Heuristics argument to pass to ./parallel (e.g. 'all' or '1,3')")
     parser.add_argument("output", help="Benchmark output CSV file")
     parser.add_argument("--check-sodd", action="store_true", default=False)
     return parser.parse_args()
@@ -26,11 +27,11 @@ def resolve_executable():
     return str(exe.resolve())
 
 
-def run_instance(exe, cnf_path, output_path, check_sodd):
+def run_instance(exe, cnf_path, heuristics, output_path, check_sodd):
     cmd = [
         exe,
         str(cnf_path),
-        "all",
+        heuristics,
         "--bench",
         "--bench-file",
         str(output_path),
@@ -59,9 +60,12 @@ def main():
 
     output_path = Path(args.output)
     for cnf_path in tqdm(cnf_files, desc="Benchmarking", unit="file"):
-        run_instance(exe, cnf_path, output_path, args.check_sodd)
+        run_instance(exe, cnf_path, args.heuristics, output_path, args.check_sodd)
 
 
 if __name__ == "__main__":
-    # python ./src/run_benchmarks.py ./instances/grid grid_res.csv
+    # python ./src/run_benchmarks.py ./instances/grid all grid_res.csv
+    # python ./src/run_benchmarks.py ./instances/ratio_1000 all ratio_1000_res.csv
+    # python ./src/run_benchmarks.py ./instances/vars_1.8 1,2,3 vars_1.8_res.csv
+    # TODO: Come sopra ma anche con 4
     main()

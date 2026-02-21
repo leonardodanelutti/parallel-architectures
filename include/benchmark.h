@@ -11,6 +11,7 @@ struct BenchmarkRow {
     double wall_ms;
     float gpu_ms;
     int num_assignments;
+    int num_loops;
     size_t used_bytes;
     size_t free_bytes;
     size_t total_bytes;
@@ -21,6 +22,7 @@ public:
     void enable(const std::string& path, const std::string& filename, const std::string& heuristic);
     void setInstanceInfo(int num_vars, int num_clauses, int lower_bound, int upper_bound, bool bounds_present);
     void setGraphStats(int num_scc, int num_wcc, int num_levels);
+    void setNumLoops(int num_loops);
     bool enabled() const;
     void record(const std::string& phase, double wall_ms, float gpu_ms, int num_assignments = -1);
     void setLastAssignments(int num_assignments);
@@ -39,6 +41,7 @@ private:
     int num_scc_ = -1;
     int num_wcc_ = -1;
     int num_levels_ = -1;
+    int num_loops_ = -1;
     std::vector<BenchmarkRow> rows_;
 };
 
@@ -82,6 +85,7 @@ void benchStartTotal(BenchmarkState& state);
 void benchStopTotal(BenchmarkState& state);
 void benchFlush(BenchmarkState& state);
 void benchSetLastAssignments(BenchmarkState& state, int num_assignments);
+void benchSetNumLoops(BenchmarkState& state, int num_loops);
 void benchSetInstanceInfo(
     BenchmarkState& state,
     int num_vars,
