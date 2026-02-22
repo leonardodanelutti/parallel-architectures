@@ -5,9 +5,9 @@ import seaborn as sns
 import re
 
 # Load CSV
-data_grid = pd.read_csv('grid_res.csv')
-data_ratio = pd.read_csv('ratio_1000_res.csv')
-data_vars = pd.read_csv('vars_1.8_res.csv')
+data_grid = pd.read_csv('res_grid.csv')
+data_ratio = pd.read_csv('res_ratio_1000.csv')
+data_vars = pd.read_csv('res_vars_1.8.csv')
 
 # Extract ratio from filename
 def extract_ratio(filename):

@@ -64,8 +64,8 @@ def main():
 
 
 if __name__ == "__main__":
-    # python ./src/run_benchmarks.py ./instances/grid all grid_res.csv
-    # python ./src/run_benchmarks.py ./instances/ratio_1000 all ratio_1000_res.csv
-    # python ./src/run_benchmarks.py ./instances/vars_1.8 1,2,3 vars_1.8_res.csv
-    # TODO: Come sopra ma anche con 4
+    # python ./src/run_benchmarks.py ./instances/grid all res_grid.csv
+    # python ./src/run_benchmarks.py ./instances/ratio_1000 all res_ratio_1000.csv
+    # python ./src/run_benchmarks.py ./instances/vars_1.8 1,2,3 res_vars_1.8.csv
+    # python ./src/run_benchmarks.py ./instances/vars_1.8_all all res_vars_1.8.csv
     main()
