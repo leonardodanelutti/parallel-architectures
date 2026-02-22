@@ -152,6 +152,7 @@ def main():
 
 if __name__ == "__main__":
     # python3 src/generate_instances.py 100 5000 41 0.5 4.5 41 ./instances/grid/
-    # python3 src/generate_instances.py 600 600 10 0.5 5.5 51 ./instances/ratio_1000/ --clingo-timeout 400
+    # python3 src/generate_instances.py 500 500 10 0.5 4.5 41 ./instances/ratio_1000/ --clingo-timeout 400
     # python3 src/generate_instances.py 1000 1000000 200 1.8 1.8 1 ./instances/vars_1.8/
+    # python3 src/generate_instances.py 1000 25000 200 1.8 1.8 1 ./instances/vars_1.8_all/
     main()
