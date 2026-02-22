@@ -4,9 +4,7 @@ This repository contains the final project for the Parallel Architectures course
 
 ## Project Overview
 
-The project is divided into three main parts:
-2. **CUDA Implementation**: A parallel version of the algorithm using CUDA to leverage GPU acceleration.
-2. **Benchmarking**: A benchmarking suite to compare the performance of CUDA implementations.
+The project consists of implementing a CUDA-based solution to a specific problem, which will be defined in the next section. The implementation will be benchmarked and a report is written to analyze the results and discuss the performance of the solution.
 
 ## The Problem
 
@@ -35,24 +33,15 @@ A possible solution is to select the variable set X = {x1, x2} and assign truth 
 - **C++ Compiler** with C++11 support (g++ or clang++)
 - **NVIDIA GPU** with compute capability 3.0 or higher
 
-### Quick Start
-```bash
-   make
-   ./parallel
-```
-
 ## Build System
-
-### Makefile Targets
 
 ```bash
 make parallel   # Build CUDA implementation
-make run-all    # Run parallel and benchmarks
+make run        # Run the solver
 make clean      # Remove build artifacts
-make help       # Show detailed help
 ```
 
-### Compiler Flags
+## Compiler Flags
 
 - **CXXFLAGS**: `-std=c++11 -O3 -Wall -Wextra`
 - **NVCCFLAGS**: `-std=c++11 -O3 -arch=sm_35`

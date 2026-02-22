@@ -10,19 +10,19 @@ def parse_args():
         description="Run the parallel solver on all .cnf files in a folder with benchmarking."
     )
     parser.add_argument("folder", help="Folder containing .cnf files")
-    parser.add_argument("heuristics", help="Heuristics argument to pass to ./parallel (e.g. 'all' or '1,3')")
+    parser.add_argument("heuristics", help="Heuristics argument to pass to ./fix (e.g. 'all' or '1,3')")
     parser.add_argument("output", help="Benchmark output CSV file")
     parser.add_argument("--check-sodd", action="store_true", default=False)
     return parser.parse_args()
 
 
 def resolve_executable():
-    exe = Path("./parallel")
+    exe = Path("./fix")
     if not exe.exists():
-        print("Error: ./parallel not found. Build the binary or adjust the script.")
+        print("Error: ./fix not found. Build the binary or adjust the script.")
         sys.exit(1)
     if not exe.is_file() or not exe.stat().st_mode & 0o111:
-        print("Error: ./parallel is not executable.")
+        print("Error: ./fix is not executable.")
         sys.exit(1)
     return str(exe.resolve())
 
@@ -65,7 +65,7 @@ def main():
 
 if __name__ == "__main__":
     # python ./src/run_benchmarks.py ./instances/grid all res_grid.csv
-    # python ./src/run_benchmarks.py ./instances/ratio_1000 all res_ratio_1000.csv
+    # python ./src/run_benchmarks.py ./instances/ratio_500 all res_ratio_500.csv
     # python ./src/run_benchmarks.py ./instances/vars_1.8 1,2,3 res_vars_1.8.csv
-    # python ./src/run_benchmarks.py ./instances/vars_1.8_all all res_vars_1.8.csv
+    # python ./src/run_benchmarks.py ./instances/vars_1.8_all all res_vars_1.8_all.csv
     main()
