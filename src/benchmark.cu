@@ -79,7 +79,7 @@ void BenchmarkLogger::flush() const {
     }
 
     if (write_header) {
-        out << "filename,heuristic,num_vars,num_clauses,lower_bound,upper_bound,bounds_present," 
+        out << "filename,heuristic,num_vars,num_clauses,lower_bound,upper_bound,clingo_sec,bounds_present," 
                "num_scc,num_wcc,num_levels,phase,wall_ms,gpu_ms,used_bytes,free_bytes,total_bytes,num_loops,num_assignments"
             << std::endl;
     }
@@ -91,6 +91,7 @@ void BenchmarkLogger::flush() const {
             << num_clauses_ << ','
             << lower_bound_ << ','
             << upper_bound_ << ','
+            << time_ << ','
             << (bounds_present_ ? 1 : 0) << ','
             << num_scc_ << ','
             << num_wcc_ << ','
