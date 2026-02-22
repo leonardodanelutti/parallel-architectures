@@ -19,6 +19,7 @@ def solve_y(r, y0=0.5):
 data_grid = pd.read_csv('./instances/res_grid.csv')
 data_ratio = pd.read_csv('./instances/res_ratio_500.csv')
 data_vars = pd.read_csv('./instances/res_vars_1.8.csv')
+data_vars_all = pd.read_csv('./instances/res_vars_1.8_all.csv')
 
 # Extract ratio from filename
 def extract_ratio(filename):
@@ -30,6 +31,7 @@ def extract_ratio(filename):
 data_grid['ratio'] = data_grid['filename'].apply(extract_ratio)
 data_ratio['ratio'] = data_ratio['filename'].apply(extract_ratio)
 data_vars['ratio'] = data_vars['filename'].apply(extract_ratio)
+data_vars_all['ratio'] = data_vars_all['filename'].apply(extract_ratio)
 
 
 def plot_heatmap(df, phase_names, values, title, cmap='viridis'):
@@ -140,37 +142,42 @@ plt.savefig(os.path.join(images_dir, 'approx_all_heuristics_vs_ratio.png'))
 plt.close()
 
 # Plot time taken by each heuristic vs number of variables and print slopes
-plt.figure(figsize=(8, 6))
-colors = ['b', 'g', 'r', 'm']
+def plot_time_vs_num_vars(df, heuristics, file_name, scale='linear'):
+    plt.figure(figsize=(8, 6))
+    colors = ['b', 'g', 'r', 'm']
+    for h, color in zip(heuristics, colors):
+        df_h = df[df['phase'] == h].copy()
+        grouped = df_h.groupby('num_vars')['wall_ms'].mean()
+        plt.plot(grouped.index, grouped.values, marker='o', color=color, label=h)
+        # Compute and print slopes for log(time) vs log(num_vars)
+        x = np.log10(grouped.index.values)
+        y = np.log10(grouped.values)
+        mask_low = grouped.index.values < 2**17
+        mask_high = grouped.index.values >= 2**17
+        if np.sum(mask_low) > 1:
+            slope_low = np.polyfit(x[mask_low], y[mask_low], 1)[0]
+            print(f"{h} slope for num_vars < 1e5: {slope_low:.4f}")
+        else:
+            print(f"{h} slope for num_vars < 1e5: Not enough points")
+        if np.sum(mask_high) > 1:
+            slope_high = np.polyfit(x[mask_high], y[mask_high], 1)[0]
+            print(f"{h} slope for num_vars >= 1e5: {slope_high:.4f}")
+        else:
+            print(f"{h} slope for num_vars >= 1e5: Not enough points")
+    plt.xlabel('Number of Variables')
+    plt.ylabel('Time (ms)')
+    plt.xscale(scale)
+    plt.yscale(scale)
+    plt.title('Time Taken by Heuristic vs Number of Variables')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(images_dir, file_name))
+    plt.close()
+
 fast_heuristics = ['heuristic1', 'heuristic2', 'heuristic3']
-for h, color in zip(fast_heuristics, colors):
-    df_h = data_vars[data_vars['phase'] == h].copy()
-    grouped = df_h.groupby('num_vars')['wall_ms'].mean()
-    plt.plot(grouped.index, grouped.values, marker='o', color=color, label=h)
-    # Compute and print slopes for log(time) vs log(num_vars)
-    x = np.log10(grouped.index.values)
-    y = np.log10(grouped.values)
-    mask_low = grouped.index.values < 2**17
-    mask_high = grouped.index.values >= 2**17
-    if np.sum(mask_low) > 1:
-        slope_low = np.polyfit(x[mask_low], y[mask_low], 1)[0]
-        print(f"{h} slope for num_vars < 1e5: {slope_low:.4f}")
-    else:
-        print(f"{h} slope for num_vars < 1e5: Not enough points")
-    if np.sum(mask_high) > 1:
-        slope_high = np.polyfit(x[mask_high], y[mask_high], 1)[0]
-        print(f"{h} slope for num_vars >= 1e5: {slope_high:.4f}")
-    else:
-        print(f"{h} slope for num_vars >= 1e5: Not enough points")
-plt.xlabel('Number of Variables')
-plt.ylabel('Time (ms)')
-plt.xscale('log')
-plt.yscale('log')
-plt.title('Time Taken by Heuristic vs Number of Variables')
-plt.legend()
-plt.tight_layout()
-plt.savefig(os.path.join(images_dir, 'heuristic_time_vs_num_vars_log.png'))
-plt.close()
+plot_time_vs_num_vars(data_vars, fast_heuristics, 'time_vs_num_vars_fast_heuristics.png', scale='log')
+plot_time_vs_num_vars(data_vars, fast_heuristics, 'time_vs_num_vars_fast_heuristics_linear.png')
+plot_time_vs_num_vars(data_vars_all, heuristics, 'time_vs_num_vars_all_heuristics.png', scale='log')
 
 
 # Plot average time taken by Clingo for each ratio in instances/res_ratio_500
