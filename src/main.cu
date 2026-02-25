@@ -99,6 +99,11 @@ int main(int argc, char* argv[]) {
         benchEnd(g_bench, "heuristic" + std::to_string(static_cast<int>(h)), BENCH_DEVICE);
         int num_assignments = getNumAssignments(d_backbone_assignments, condensed.d_scc_lookup, scc_graph.num_nodes, graph.num_nodes);
         benchSetLastAssignments(g_bench, num_assignments);
+
+        // Print assignments if benchmarking is not enabled
+        if (!config.bench_enabled) {
+            printAssignments(d_backbone_assignments, condensed.d_scc_lookup, scc_graph.num_nodes, graph.num_nodes, h);
+        }
     }
 
     // Cleanup
@@ -172,7 +177,7 @@ void printAssignments(int* d_assignments, int* scc_map, int num_nodes, int num_l
     auto var_assignments = compute_assignments(d_assignments, scc_map, num_nodes, num_lit);
     std::cout << "h" << static_cast<int>(heuristic) << ": " << var_assignments.size() << std::endl;
     for (const auto& [var, value] : var_assignments) {
-        std::cout << var << " " << value << " ";
+        std::cout << var + 1 << " " << value << " " << std::endl;
     }
     std::cout << std::endl;
 }

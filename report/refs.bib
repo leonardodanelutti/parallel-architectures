@@ -1,0 +1,17 @@
+@SCC-ALG{10.1145/3581784.3607071,
+author = {Alabandi, Ghadeer and Sands, William and Biros, George and Burtscher, Martin},
+title = {A GPU Algorithm for Detecting Strongly Connected Components},
+year = {2023},
+isbn = {9798400701092},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3581784.3607071},
+doi = {10.1145/3581784.3607071},
+abstract = {Detecting strongly connected components (SCCs) is an important step in various graph computations. The fastest GPU and CPU implementations from the literature work well on graphs where most of the vertices belong to a single SCC and the vertex degrees follow a power-law distribution. However, these algorithms can be slow on the mesh graphs used in certain radiative transfer simulations, which have a nearly constant vertex degree and can have significant variability in the number and size of SCCs. We introduce ECL-SCC, an SCC detection algorithm that addresses these shortcomings. Our approach is GPU friendly and employs innovative techniques such as maximum ID propagation and edge removal. On an A100 GPU, ECL-SCC performs on par with the fastest prior GPU code on power-law graphs and outperforms it by 7.8\texttimes{} on mesh graphs. Moreover, ECL-SCC running on the GPU outperforms fast parallel CPU code by three orders of magnitude on meshes.},
+booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+articleno = {17},
+numpages = {13},
+keywords = {strongly connected components, parallelism, performance optimization, GPU implementation},
+location = {Denver, CO, USA},
+series = {SC '23}
+}
