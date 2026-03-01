@@ -10,35 +10,24 @@ struct TopoResult {
     int num_levels;
 };
 
-// Compute in-degrees of each node
 __global__ void computeInDegrees(
-    const int* const __restrict__ col_ind, 
-    int* const __restrict__ in_degree, 
-    int num_edges
-) {
-    int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-
-    for (int i = tid; i < num_edges; i += stride) {
-        int target_node = col_ind[i];
-        atomicAdd(&in_degree[target_node], 1);
-    }
-}
-
-__global__ void findZeros(
-    const int* const __restrict__ in_degree,
+    const int* const __restrict__ row_ptr,
     int num_nodes,
     int* const __restrict__ queue,
+    int* const __restrict__ in_degree,
     int* const __restrict__ queue_count
 ) {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
 
     for (int i = tid; i < num_nodes; i += stride) {
-        if (in_degree[i] == 0) {
+        int out_degree = row_ptr[i + 1] - row_ptr[i];
+        int complement = i ^ 1;
+        in_degree[complement] = out_degree; // The out-degree is the in-degree of its complement
+        if (out_degree == 0) {
             // Reserve a spot in the queue
             int idx = atomicAdd(queue_count, 1);
-            queue[idx] = i;
+            queue[idx] = complement;
         }
     }
 }
@@ -76,7 +65,6 @@ __global__ void processFrontier(
 TopoResult topologicalSort(const CSRRepr& d_graph) {
     TopoResult result{};
     int num_nodes = d_graph.num_nodes;
-    int num_edges = d_graph.num_edges;
 
     // Allocate device memory for topological order
     int* d_topo_order;
@@ -98,13 +86,9 @@ TopoResult topologicalSort(const CSRRepr& d_graph) {
     CUDA_CHECK(cudaMalloc(&d_in_degree, num_nodes * sizeof(int)));
     CUDA_CHECK(cudaMemset(d_in_degree, 0, num_nodes * sizeof(int)));
 
-    // Compute in-degrees
-    int numBlocksEdges = gridStrideBlocks(num_edges);
-    computeInDegrees<<<numBlocksEdges, NumThPerBlock>>>(d_graph.col_ind, d_in_degree, num_edges);
-
-    // Find initial zero in-degree nodes
+    // Fin sources and in-degrees
     int numBlocksNodes = gridStrideBlocks(num_nodes);
-    findZeros<<<numBlocksNodes, NumThPerBlock>>>(d_in_degree, num_nodes, d_topo_order, d_counter);
+    computeInDegrees<<<numBlocksNodes, NumThPerBlock>>>(d_graph.row_ptr, num_nodes, d_topo_order, d_in_degree, d_counter);
 
     result.level_starts.push_back(0);
 

@@ -1,8 +1,14 @@
 // Sizes used across the template.
-#let script-size = 11.5pt
-#let footnote-size = 10.50012pt
-#let normal-size = 13.0000pt
-#let large-size = 18.00000pt
+#let script-size = 10.5pt
+#let footnote-size = 9.50012pt
+#let normal-size = 12.0000pt
+#let large-size = 16.00000pt
+
+#show figure: it => {
+	show figure.caption: cap => text(size:10pt, )
+	
+}
+
 
 // This function gets your whole document as its `body` and formats
 // it as an article in the style of the American Mathematical Society.
@@ -140,7 +146,7 @@
         numbering(caption.numbering, ..caption.counter.at(it.location()))
       }
       [. ]
-      caption.body
+      text(size:11pt, caption.body)
     }
 
     // We want a bit of space around tables and images.
