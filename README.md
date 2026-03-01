@@ -21,10 +21,6 @@ Given the clauses:
 
 A possible solution is to select the variable set X = {x1, x2} and assign truth values x1 = true, x2 = false, which satisfies all clauses.
 
-## Solution Approach
-
-// TODO:
-
 ## Getting Started
 
 ### Prerequisites

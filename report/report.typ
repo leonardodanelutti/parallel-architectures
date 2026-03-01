@@ -262,8 +262,7 @@ Per generare un istanza di 2-SAT con n variabili e m clausole, viene prima gener
 
 Per visualizzare meglio questi risultati, è stata generata una griglia di istanze con numero di variabili che va da 100 a 5000, e rapporto clausole/variabili che va da 0.5 a 4.5. Le istanze variano 41 volte per quanto riguarda il numero di variabili, e 41 volte per quanto riguarda il rapporto clausole/variabili, per un totale di 1681 istanze. Per ogni istanza sono stati contati il numero di SCC e il numero di WCC dopo l'eliminazione dei backbone. 
 
-Nella Figura 3 viene mostrato come il rapporto tra il numero di SCC e il numero di letterali varia rispetto al rapporto clausole/variabili. Per un rapporto $r<2$ (e quindi un rapporti archi/nodi nel grafo delle implicazioni $<1$) il numero di SCC è uguale al numero di letterali, mentre per $r>2$ inizia a diminuire. Questo è quanto ci si aspetta per i grafi generati 
-// TODO: reference
+Nella Figura 3 viene mostrato come il rapporto tra il numero di SCC e il numero di letterali varia rispetto al rapporto clausole/variabili. Per un rapporto $r<2$ (e quindi un rapporti archi/nodi nel grafo delle implicazioni $<1$) il numero di SCC è uguale al numero di letterali, mentre per $r>2$ inizia a diminuire. 
 
 Per quanto riguarda il numero di WCC per SCC, mostrato nella Figura 4, si nota che per $r<2$ la funzione è decrescente, l'aggiunta di archi nel grafo delle implicazioni aggrega sempre più nodi e quindi sepre più componenti debolmente connesse. Per $r>2$ invece la funzione è crescente, questo per l'effetto dell'eliminazione dei backbone. Infatti, senza la loro eliminazione, il numero di WCC diminuirebbe fino a 1, dato che il grafo delle implicazioni diventerebbe sempre più connesso. L'eliminazione dei backbone diventa sempre più frequente all'aumentare del numero degli archi e quindi frammenta sempre di più il grafo, aumentando il numero di WCC.
 
@@ -286,9 +285,9 @@ Per quanto riguarda il numero di WCC per SCC, mostrato nella Figura 4, si nota c
 
 == Grado di approssimazione delle euristiche
 
-Per valutare il grado di approssimazione delle euristiche, è stato confrontato il fix-set trovato da ogni euristica con un fix-set ottimale ottenuto tramite risoluzione esatta con Clingo
-// TODO: Spiegare cos'è
-. Sono state generate 41 istanze con rapporto clausole/variabili che va da 0.5 a 4.5 con 500 variabili per 10 volte. Per ogni istanza è stato calcolato il fix-set ottimale con Clingo, con un timeout di 400 secondi, e il fix-set approssimato con ogni euristica. Il tempo di esecuzione di Clingo sulle varie istanze può essere visualizzato nella @clingo_time, per rapporti tra 1.1 e 2.7 il tempo impiegato è notevolmente più alto.
+Per valutare il grado di approssimazione delle euristiche, è stato confrontato il fix-set trovato da ogni euristica con un fix-set ottimale ottenuto tramite risoluzione esatta con Clingo, un solver ASP (Answer Set Programming) che permettere di scrivere i vincoli del problema in modo semplice e di ottenere soluzioni ottimali.
+
+Sono state generate 41 istanze con rapporto clausole/variabili che va da 0.5 a 4.5 con 500 variabili per 10 volte. Per ogni istanza è stato calcolato il fix-set ottimale con Clingo, con un timeout di 400 secondi, e il fix-set approssimato con ogni euristica. Il tempo di esecuzione di Clingo sulle varie istanze può essere visualizzato nella @clingo_time, per rapporti tra 1.1 e 2.7 il tempo impiegato è notevolmente più alto.
 
 #figure(
   caption: [Tempo di esecuzione di Clingo al variare del rapporto clausole/variabili, tempo in scala logaritmica],
