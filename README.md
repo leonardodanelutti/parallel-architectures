@@ -1,90 +1,83 @@
-# Parallel Architectures - CUDA Project
+# GPU heuristics for 2-SAT fix-set minimization
 
-This repository contains the final project for the Parallel Architectures course, focusing on CUDA programming. The goal is to implement and optimize parallel algorithms for solving a problem using CUDA.
+A CUDA solver that, given a satisfiable 2-SAT formula, looks for a **small set of variables (a
+"fix-set") whose assignment leaves exactly one satisfying assignment**. Finding a minimum fix-set is
+hard, so the project designs greedy heuristics, runs the whole graph pipeline on the GPU, and
+measures both solution quality and scalability.
 
-## Project Overview
+Final project for the *Programming on Parallel Architectures* course, M.Sc. in Computer Science,
+University of Udine.
 
-The project consists of implementing a CUDA-based solution to a specific problem, which will be defined in the next section. The implementation will be benchmarked and a report is written to analyze the results and discuss the performance of the solution.
+## Results at a glance
 
-## The Problem
+- **Scales to 10⁶ variables.** Reachability queries are split into memory-bounded chunks, so instances
+  larger than GPU memory still run.
+- **Near-linear runtime.** Log–log slopes of runtime against instance size are about 1.06–1.14 while
+  one chunk fits in memory, rising to 1.7–1.8 once queries are chunked (still sub-quadratic).
+- **Close to optimal.** Results were compared with exact optima from the ASP solver Clingo on 410
+  instances (500 variables, clause/variable ratio 0.5–4.5). The best heuristic stays within **1.25×** of the
+  optimum on average and approaches 1× on denser instances.
+- **Quality versus speed.** The most accurate heuristic is about 100× slower than the others,
+  which is measured and discussed in the report.
 
-Let P be an instance of 2-SAT, i.e. a set of clauses, each containing exactly two literals, and A the set of variables appearing in P. The goal is to find a subset of variables X ⊆ A of minimum cardinality, and an assignment of truth values to the variables in X, such that there is only one satisfying assignment for P.
+## How it works
 
-The goal is to find a good heuristic to get a small set X.
+A 2-SAT formula becomes an **implication graph** with two nodes per variable. The pipeline runs on
+the GPU:
 
-### Example
+1. **Strongly connected components** of the implication graph, then condensation to a DAG.
+2. **Topological levels** of the condensed DAG.
+3. **Backbone detection.** Reachability is propagated in topological order. A literal that reaches its own
+   complement is forced, so its variable is removed from the search.
+4. **Weakly connected components.** The remaining graph splits into independent subproblems.
+5. **Greedy search.** In each round a heuristic picks one literal per pair of complementary components.
+   The literal is added to the fix-set, and its consequences are propagated forwards (everything it implies) and
+   backwards (everything that implies its complement).
 
-Given the clauses:
-- (¬x1 ∨ x2)
-- (¬x2 ∨ x3)
-- (¬x3 ∨ x1)
+Heuristics:
 
-A possible solution is to select the variable set X = {x1, x2} and assign truth values x1 = true, x2 = false, which satisfies all clauses.
+| # | Picks the literal with… | Notes |
+|---|---|---|
+| 1 | source status in the remaining DAG | fastest, least accurate |
+| 2 | highest out-degree towards unassigned nodes | fastest overall |
+| 3 | largest reachable set (computed once, then masked) | good speed/quality trade-off |
+| 4 | largest reachable set, recomputed each round | most accurate, ~100× slower |
 
-## Getting Started
+## Build
 
-### Prerequisites
-
-- **CUDA Toolkit** (10.0 or higher) - [Download](https://developer.nvidia.com/cuda-downloads)
-- **C++ Compiler** with C++11 support (g++ or clang++)
-- **NVIDIA GPU** with compute capability 3.0 or higher
-
-## Build System
+Requires the CUDA Toolkit, a C++17 compiler and an NVIDIA GPU. Set `-arch=sm_XX` in the `Makefile`
+to match your GPU (default `sm_75`).
 
 ```bash
-make parallel   # Build CUDA implementation
-make run        # Run the solver
-make clean      # Remove build artifacts
+make        # builds ./fix
+make clean
 ```
 
 ## Usage
 
-After building, you will have an executable called `fix`, which can be used to solve 2-SAT instances and find an approximate fix-set.
+```bash
+./fix <instance.cnf> [--heuristics 1,3] [--check-sodd] [--bench] [--bench-file <path>]
+```
 
-### Running the solver
+- `<instance.cnf>`: 2-SAT instance in CNF format.
+- `--heuristics`: comma-separated list of heuristics to run (default: all).
+- `--check-sodd`: check whether the instance is satisfiable first.
+- `--bench`, `--bench-file`: record timings (default output `benchmarks.csv`).
+
+### Reproducing the experiments
 
 ```bash
-./fix <instance_path.cnf> [heuristic list] [--check-sodd] [--bench] [--bench-file <path>]
+# Generate random instances (optionally solved exactly with Clingo for comparison)
+python scripts/generate_instances.py <n_start> <n_end> <n_count> <ratio_start> <ratio_end> <ratio_count> <out_dir> [--clingo-timeout <s>]
+
+# Run a heuristic sweep over a directory of instances
+python scripts/run_benchmark.py <instances_dir> <heuristic_list> <out.csv> [--check-sodd]
 ```
-- `<instance_path.cnf>`: Path to the file containing the 2-SAT instance in CNF format.
-- `[heuristic list]`: Optional list of heuristics to apply, e.g. `--heuristics 1,3` to apply heuristics 1 and 3. If not specified, all available heuristics will be applied.
-- `--check-sodd`: Option to check if the instance is satisfiable.
-- `--bench`: Option to enable performance benchmarking.
-- `--bench-file <path>`: Specifies an output file for benchmark results. If not specified, results are saved to `benchmarks.csv`.
 
-### Python Scripts
+`asp.lp` contains the exact ASP encoding used with Clingo. The full write-up, with algorithms,
+figures and analysis, is in [`report.pdf`](report.pdf) (in Italian).
 
-Two Python scripts are provided for generating 2-SAT instances and running benchmarks automatically. These scripts are located in the `scripts/` folder.
+## References
 
-#### Generate 2-SAT Instances
-
-```bash
-python scripts/generate_instances.py <num_var_start> <num_var_end> <num_var> <ratio_start> <ratio_end> <num_ratio> <output_dir> [--clingo-timeout <seconds>]
-```
-- `<num_var_start>`: Minimum number of variables for generated instances.
-- `<num_var_end>`: Maximum number of variables for generated instances.
-- `<num_var>`: Number of instances (with respect to variable count) to generate.
-- `<ratio_start>`: Minimum clause-to-variable ratio for generated instances.
-- `<ratio_end>`: Maximum clause-to-variable ratio for generated instances.
-- `<num_ratio>`: Number of instances (with respect to clause/variable ratio) to generate.
-- `<output_dir>`: Output directory for generated instances.
-- `--clingo-timeout <seconds>`: Timeout in seconds for solving the instance with Clingo. If not specified, Clingo is not run.
-
-You can also change the SEED and the method for generating the number of instances inside the file.
-
-#### Run Benchmarks on Multiple Instances
-
-```bash
-python scripts/run_benchmark.py <instances_dir> <heuristic list> <out_file> [--check-sodd]
-```
-- `<instances_dir>`: Directory containing the instances to test.
-- `<heuristic list>`: List of heuristics to apply, e.g. `--heuristics 1,3` to apply heuristics 1 and 3.
-- `<out_file>`: Output file for benchmark results, e.g. `benchmark_results.csv`.
-- `--check-sodd`: Option to check if instances are satisfiable before running the benchmark.
-
-## Compiler Flags
-
-- **CXXFLAGS**: `-std=c++17 -O3 -Wall -Wextra`
-- **NVCCFLAGS**: `-std=c++17 -O3 -arch=sm_35 --extended-lambda`
-
-Adjust `-arch=sm_XX` based on your GPU's compute capability.
+- G. Alabandi, W. Sands, G. Biros, M. Burtscher. *A GPU Algorithm for Detecting Strongly Connected Components.* SC '23.
+- J. Soman, K. Kishore, P. J. Narayanan. *A fast GPU algorithm for graph connectivity.* IPDPSW 2010.
